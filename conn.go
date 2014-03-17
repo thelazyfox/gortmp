@@ -41,7 +41,7 @@ type ConnHandler interface {
 	// Received message
 	OnReceived(conn Conn, message *Message)
 	// Received command
-	OnReceivedCommand(conn Conn, command *Command)
+	OnReceivedCommand(conn Conn, message *Message, command *Command)
 	// Connection closed
 	OnClosed(conn Conn)
 }
@@ -679,7 +679,7 @@ func (conn *conn) received(message *Message) {
 					logger.ModulePrintf(logHandler, log.LOG_LEVEL_TRACE,
 						"Unkown message type %d in Command chunk stream!\n", message.Type)
 				}
-				conn.invokeCommand(cmd)
+				conn.invokeCommand(message, cmd)
 			} else {
 				conn.handler.OnReceived(conn, message)
 			}
@@ -874,10 +874,10 @@ func (conn *conn) invokeSetPeerBandwidth(message *Message) {
 		"conn.inBandwidthLimit = %d/n", conn.inBandwidthLimit)
 }
 
-func (conn *conn) invokeCommand(cmd *Command) {
+func (conn *conn) invokeCommand(msg *Message, cmd *Command) {
 	logger.ModulePrintln(logHandler, log.LOG_LEVEL_TRACE,
 		"conn::invokeCommand()")
-	conn.handler.OnReceivedCommand(conn, cmd)
+	conn.handler.OnReceivedCommand(conn, msg, cmd)
 }
 
 func (conn *conn) SetStreamBufferSize(streamId uint32, size uint32) {

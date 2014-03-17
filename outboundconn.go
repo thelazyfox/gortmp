@@ -267,7 +267,7 @@ func (obConn *outboundConn) OnReceived(conn Conn, message *Message) {
 }
 
 // Callback when recieved message.
-func (obConn *outboundConn) OnReceivedCommand(conn Conn, command *Command) {
+func (obConn *outboundConn) OnReceivedCommand(conn Conn, message *Message, command *Command) {
 	command.Dump()
 	switch command.Name {
 	case "_result":
@@ -325,7 +325,7 @@ func (obConn *outboundConn) OnReceivedCommand(conn Conn, command *Command) {
 		}
 	case "onBWCheck":
 	}
-	obConn.handler.OnReceivedCommand(obConn.conn, command)
+	obConn.handler.OnReceivedCommand(obConn.conn, message, command)
 }
 
 // Connection closed

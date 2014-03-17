@@ -203,9 +203,64 @@ func (stream *inboundStream) onPlay(cmd *Command) bool {
 }
 
 func (stream *inboundStream) onPublish(cmd *Command) bool {
+	if len(cmd.Objects) < 2 {
+		stream.sendOnStatusStreamPublishBadName(cmd, "")
+		return true
+	}
+
+	streamName, ok := cmd.Objects[1].(string)
+	if !ok || len(streamName) == 0 {
+		stream.sendOnStatusStreamPublishBadName(cmd, "")
+		return true
+	}
+
+	stream.sendOnStatusStreamPublishStart(cmd, streamName)
+	stream.handler.OnPublishStart(stream)
 	return true
 }
+
+func (stream *inboundStream) sendOnStatusStreamPublishStart(cmd *Command, streamName string) {
+	obj2 := make(amf.Object)
+	obj2["level"] = "status"
+	obj2["code"] = NETSTREAM_PUBLISH_START
+	obj2["description"] = streamName
+	stream.sendCommand(CS_ID_COMMAND, "onStatus", 0, nil, obj2)
+}
+
+func (stream *inboundStream) sendOnStatusStreamPublishBadName(cmd *Command, streamName string) {
+	obj2 := make(amf.Object)
+	obj2["level"] = "error"
+	obj2["code"] = "NetStream.Publish.BadName"
+	obj2["description"] = "invalid stream name"
+	obj2["details"] = streamName
+	obj2["clientid"] = ""
+
+	stream.sendCommand(CS_ID_COMMAND, "onStatus", 0, nil, obj2)
+}
+
+func (stream *inboundStream) sendCommand(csid uint32, name string, transactionID uint32, obj1, obj2 interface{}) {
+	cmd := &Command{
+		Name:          name,
+		TransactionID: transactionID,
+		Objects:       []interface{}{obj1, obj2},
+	}
+
+	buf := new(bytes.Buffer)
+	err := cmd.Write(buf)
+	CheckError(err, "inboundStream::sendCommand()")
+
+	msg := &Message{
+		ChunkStreamID: csid,
+		Type:          COMMAND_AMF0,
+		Size:          uint32(buf.Len()),
+		Buf:           buf,
+		StreamID:      stream.ID(),
+	}
+	stream.conn.conn.Send(msg)
+}
+
 func (stream *inboundStream) onRecevieAudio(cmd *Command) bool {
+
 	return true
 }
 func (stream *inboundStream) onRecevieVideo(cmd *Command) bool {

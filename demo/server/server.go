@@ -3,8 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/thelazyfox/gortmp"
+	"github.com/zhangpeihao/goamf"
 	"github.com/zhangpeihao/goflv"
-	"github.com/zhangpeihao/gortmp"
 	"github.com/zhangpeihao/log"
 	"os"
 	"os/signal"
@@ -20,7 +21,7 @@ const (
 var (
 	address     *string = flag.String("Address", ":1935", "The address to bind.")
 	mediaPath   *string = flag.String("MediaPath", "./medias", "The media files folder.")
-	flvFileName *string = flag.String("FLV", "", "Dump FLV into file.")
+	flvFileName *string = flag.String("FLV", "out.flv", "Dump FLV into file.")
 )
 
 var (
@@ -54,9 +55,29 @@ func (handler *ServerHandler) OnClosed(conn rtmp.Conn) {
 }
 
 func (handler *ServerHandler) OnReceived(conn rtmp.Conn, message *rtmp.Message) {
+	switch message.Type {
+	case rtmp.AUDIO_TYPE:
+		fallthrough
+	case rtmp.VIDEO_TYPE:
+		fmt.Printf("Timestamp - %d\n", message.AbsoluteTimestamp)
+	// case rtmp.DATA_AMF3:
+	case rtmp.DATA_AMF0:
+		var objects []interface{}
+		for message.Buf.Len() > 0 {
+			object, err := amf.ReadValue(message.Buf)
+			if err != nil {
+				fmt.Printf("Error parsing amf0 packet object: %+v\n", message)
+				return
+			}
+			objects = append(objects, object)
+		}
+		fmt.Printf("Received amf data: %+v\n", objects)
+	default:
+		fmt.Printf("Received: %+v\n", message)
+	}
 }
 
-func (handler *ServerHandler) OnReceivedCommand(conn rtmp.Conn, command *rtmp.Command) {
+func (handler *ServerHandler) OnReceivedCommand(conn rtmp.Conn, message *rtmp.Message, command *rtmp.Command) {
 	fmt.Printf("ReceviedCommand: %+v\n", command)
 }
 
@@ -91,7 +112,7 @@ func main() {
 	}
 	flag.Parse()
 
-	l := log.NewLogger(".", "server", nil, 60, 3600*24, true)
+	l := log.NewLogger(".", "server", nil, 60, 3600*24, false)
 	l.SetMainLevel(log.LOG_LEVEL_DEBUG)
 	rtmp.InitLogger(l)
 	defer l.Close()
@@ -107,6 +128,7 @@ func main() {
 	signal.Notify(ch, syscall.SIGINT)
 	sig := <-ch
 	fmt.Printf("Signal received: %v\n", sig)
+	os.Exit(0)
 }
 
 func publish(stream rtmp.InboundStream) {

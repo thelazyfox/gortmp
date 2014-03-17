@@ -90,7 +90,7 @@ func (ibConn *inboundConn) OnReceived(conn Conn, message *Message) {
 }
 
 // Callback when recieved message.
-func (ibConn *inboundConn) OnReceivedCommand(conn Conn, command *Command) {
+func (ibConn *inboundConn) OnReceivedCommand(conn Conn, message *Message, command *Command) {
 	command.Dump()
 	switch command.Name {
 	case "connect":
@@ -99,6 +99,8 @@ func (ibConn *inboundConn) OnReceivedCommand(conn Conn, command *Command) {
 	case "createStream":
 		// Create a new stream
 		ibConn.onCreateStream(command)
+	case "FCPublish":
+		ibConn.onFCPublish(message, command)
 	default:
 		logger.ModulePrintf(logHandler, log.LOG_LEVEL_TRACE, "inboundConn::ReceivedCommand: %+v\n", command)
 	}
@@ -244,9 +246,65 @@ func (ibConn *inboundConn) onCreateStream(cmd *Command) {
 	ibConn.sendCreateStreamSuccessResult(cmd)
 }
 
+func (ibConn *inboundConn) onFCPublish(msg *Message, cmd *Command) {
+	if len(cmd.Objects) < 2 {
+		ibConn.sendOnStatusStreamPublishBadName(msg, cmd, "")
+		return
+	}
+
+	streamName, ok := cmd.Objects[1].(string)
+	if !ok || len(streamName) == 0 {
+		ibConn.sendOnStatusStreamPublishBadName(msg, cmd, "")
+		return
+	}
+
+	ibConn.sendOnFCPublish(msg, cmd, streamName)
+}
+
 func (ibConn *inboundConn) onCloseStream(stream *inboundStream) {
 	ibConn.releaseStream(stream.id)
 	ibConn.handler.OnStreamClosed(ibConn, stream)
+}
+
+func (ibConn *inboundConn) sendOnStatusStreamPublishBadName(msg *Message, cmd *Command, streamName string) {
+	obj2 := make(amf.Object)
+	obj2["level"] = "error"
+	obj2["code"] = "NetStream.Publish.BadName"
+	obj2["description"] = "invalid stream name"
+	obj2["details"] = streamName
+	obj2["clientid"] = ""
+
+	ibConn.sendCommand(msg.ChunkStreamID, "onStatus", cmd.TransactionID, nil, obj2)
+}
+
+func (ibConn *inboundConn) sendCommand(csid uint32, name string, transactionID uint32, obj1, obj2 interface{}) {
+	cmd := &Command{
+		Name:          name,
+		TransactionID: transactionID,
+		Objects:       []interface{}{obj1, obj2},
+	}
+
+	buf := new(bytes.Buffer)
+	err := cmd.Write(buf)
+	CheckError(err, "inboundConn::sendCommand() create command")
+
+	msg := &Message{
+		ChunkStreamID: csid,
+		Type:          COMMAND_AMF0,
+		Size:          uint32(buf.Len()),
+		Buf:           buf,
+	}
+
+	ibConn.conn.Send(msg)
+}
+
+func (ibConn *inboundConn) sendOnFCPublish(msg *Message, cmd *Command, streamName string) {
+	obj2 := make(amf.Object)
+	obj2["level"] = "status"
+	obj2["code"] = NETSTREAM_PUBLISH_START
+	obj2["description"] = streamName
+
+	ibConn.sendCommand(CS_ID_COMMAND, "onFCPublish", 0, nil, obj2)
 }
 
 func (ibConn *inboundConn) sendConnectSucceededResult(req *Command) {
