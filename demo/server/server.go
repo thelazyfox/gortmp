@@ -1,194 +1,86 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"github.com/thelazyfox/gortmp"
-	"github.com/zhangpeihao/goamf"
-	"github.com/zhangpeihao/goflv"
-	"github.com/zhangpeihao/log"
-	"os"
-	"os/signal"
-	"syscall"
+	"github.com/thelazyfox/gortmp/log"
+	"net"
 	"time"
 )
 
-const (
-	programName = "RtmpServer"
-	version     = "0.0.1"
-)
-
 var (
-	address     *string = flag.String("Address", ":1935", "The address to bind.")
-	mediaPath   *string = flag.String("MediaPath", "./medias", "The media files folder.")
-	flvFileName *string = flag.String("FLV", "out.flv", "Dump FLV into file.")
+	listenAddr = flag.String("listen", ":1935", "The address to bind to")
 )
-
-var (
-	g_ibConn      rtmp.InboundConn
-	videoDataSize int64
-	audioDataSize int64
-	flvFile       *flv.File
-	status        uint
-)
-
-type ServerHandler struct{}
-
-// InboundConn handler funcions
-func (handler *ServerHandler) OnStatus(conn rtmp.InboundConn) {
-	status, err := g_ibConn.Status()
-	fmt.Printf("@@@@@@@@@@@@@status: %d, err: %v\n", status, err)
-}
-
-func (handler *ServerHandler) OnStreamCreated(conn rtmp.InboundConn, stream rtmp.InboundStream) {
-	fmt.Printf("Stream created: %d\n", stream.ID())
-	stream.Attach(handler)
-}
-
-func (handler *ServerHandler) OnStreamClosed(conn rtmp.InboundConn, stream rtmp.InboundStream) {
-	fmt.Printf("Stream closed: %d\n", stream.ID())
-}
-
-// Conn handler functions
-func (handler *ServerHandler) OnClosed(conn rtmp.Conn) {
-	fmt.Printf("@@@@@@@@@@@@@Closed\n")
-}
-
-func (handler *ServerHandler) OnReceived(conn rtmp.Conn, message *rtmp.Message) {
-	switch message.Type {
-	case rtmp.AUDIO_TYPE:
-		fallthrough
-	case rtmp.VIDEO_TYPE:
-		fmt.Printf("Timestamp - %d\n", message.AbsoluteTimestamp)
-	// case rtmp.DATA_AMF3:
-	case rtmp.DATA_AMF0:
-		var objects []interface{}
-		for message.Buf.Len() > 0 {
-			object, err := amf.ReadValue(message.Buf)
-			if err != nil {
-				fmt.Printf("Error parsing amf0 packet object: %+v\n", message)
-				return
-			}
-			objects = append(objects, object)
-		}
-		fmt.Printf("Received amf data: %+v\n", objects)
-	default:
-		fmt.Printf("Received: %+v\n", message)
-	}
-}
-
-func (handler *ServerHandler) OnReceivedCommand(conn rtmp.Conn, message *rtmp.Message, command *rtmp.Command) {
-	fmt.Printf("ReceviedCommand: %+v\n", command)
-}
-
-// Stream handle functions
-func (handler *ServerHandler) OnPlayStart(stream rtmp.InboundStream) {
-	fmt.Printf("OnPlayStart\n")
-	go publish(stream)
-}
-func (handler *ServerHandler) OnPublishStart(stream rtmp.InboundStream) {
-	fmt.Printf("OnPublishStart\n")
-}
-func (handler *ServerHandler) OnReceiveAudio(stream rtmp.InboundStream, on bool) {
-	fmt.Printf("OnReceiveAudio: %b\n", on)
-}
-func (handler *ServerHandler) OnReceiveVideo(stream rtmp.InboundStream, on bool) {
-	fmt.Printf("OnReceiveVideo: %b\n", on)
-}
-
-// Server handler functions
-func (handler *ServerHandler) NewConnection(ibConn rtmp.InboundConn, connectReq *rtmp.Command,
-	server *rtmp.Server) bool {
-	fmt.Printf("NewConnection\n")
-	ibConn.Attach(handler)
-	g_ibConn = ibConn
-	return true
-}
 
 func main() {
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "%s version[%s]\r\nUsage: %s [OPTIONS]\r\n", programName, version, os.Args[0])
-		flag.PrintDefaults()
-	}
 	flag.Parse()
+	log.SetLogLevel(log.TRACE)
 
-	l := log.NewLogger(".", "server", nil, 60, 3600*24, false)
-	l.SetMainLevel(log.LOG_LEVEL_DEBUG)
-	rtmp.InitLogger(l)
-	defer l.Close()
-	handler := &ServerHandler{}
-	server, err := rtmp.NewServer("tcp", *address, handler)
+	ln, err := net.Listen("tcp", *listenAddr)
 	if err != nil {
-		fmt.Println("NewServer error", err)
-		os.Exit(-1)
-	}
-	defer server.Close()
-
-	ch := make(chan os.Signal)
-	signal.Notify(ch, syscall.SIGINT)
-	sig := <-ch
-	fmt.Printf("Signal received: %v\n", sig)
-	os.Exit(0)
-}
-
-func publish(stream rtmp.InboundStream) {
-
-	var err error
-	flvFile, err = flv.OpenFile(*flvFileName)
-	if err != nil {
-		fmt.Println("Open FLV dump file error:", err)
+		fmt.Printf("Failed to bind socket: %s\n", err)
 		return
 	}
-	defer flvFile.Close()
-	startTs := uint32(0)
-	startAt := time.Now().UnixNano()
-	preTs := uint32(0)
+
+	fmt.Printf("Listening on: %s\n", ln.Addr().String())
+
 	for {
-		if status, _ = g_ibConn.Status(); status != rtmp.INBOUND_CONN_STATUS_CREATE_STREAM_OK {
-			break
-		}
-		if flvFile.IsFinished() {
-			fmt.Println("@@@@@@@@@@@@@@File finished")
-			flvFile.LoopBack()
-			startAt = time.Now().UnixNano()
-			startTs = uint32(0)
-			preTs = uint32(0)
-		}
-		header, data, err := flvFile.ReadTag()
+		conn, err := ln.Accept()
 		if err != nil {
-			fmt.Println("flvFile.ReadTag() error:", err)
-			break
-		}
-		switch header.TagType {
-		case flv.VIDEO_TAG:
-			videoDataSize += int64(len(data))
-		case flv.AUDIO_TAG:
-			audioDataSize += int64(len(data))
+			netErr, ok := err.(net.Error)
+			if !ok || !netErr.Temporary() {
+				fmt.Printf("Socket accept error: %s\n", err)
+				return
+			}
 		}
 
-		if startTs == uint32(0) {
-			startTs = header.Timestamp
-		}
-		diff1 := uint32(0)
-		//		deltaTs := uint32(0)
-		if header.Timestamp > startTs {
-			diff1 = header.Timestamp - startTs
+		br := bufio.NewReader(conn)
+		bw := bufio.NewWriter(conn)
+		rw := bufio.NewReadWriter(br, bw)
+		err = rtmp.SHandshake(conn, br, bw, 500*time.Millisecond)
+		conn.SetDeadline(time.Time{})
+		if err != nil {
+			fmt.Printf("Handshake error: %s\n", err)
 		} else {
-			fmt.Println("@@@@@@@@@@@@@@diff1")
-		}
-		if diff1 > preTs {
-			//			deltaTs = diff1 - preTs
-			preTs = diff1
-		}
-		if err = stream.SendData(header.TagType, data, diff1); err != nil {
-			fmt.Println("PublishData() error:", err)
-			break
-		}
-		diff2 := uint32((time.Now().UnixNano() - startAt) / 1000000)
-		//		fmt.Printf("diff1: %d, diff2: %d\n", diff1, diff2)
-		if diff1 > diff2+100 {
-			//			fmt.Printf("header.Timestamp: %d, now: %d\n", header.Timestamp, time.Now().UnixNano())
-			time.Sleep(time.Millisecond * time.Duration(diff1-diff2))
+			rtmp.NewConn(conn, rw, &handler{})
 		}
 	}
+}
+
+type handler struct {
+}
+
+func (h *handler) OnAccept(rtmp.Conn) {
+	fmt.Printf("OnAccept\n")
+}
+
+func (h *handler) OnConnect(rtmp.Conn) {
+	fmt.Printf("OnConnect\n")
+}
+
+func (h *handler) OnCreateStream(rtmp.Stream) {
+	fmt.Printf("OnCreateStream\n")
+}
+
+func (h *handler) OnPlay(rtmp.Stream) {
+	fmt.Printf("OnPlay\n")
+}
+
+func (h *handler) OnPublish(rtmp.Stream) {
+	fmt.Printf("OnPublish\n")
+}
+
+func (h *handler) OnClose(rtmp.Conn) {
+	fmt.Printf("OnClose\n")
+}
+
+func (h *handler) OnReceive(rtmp.Conn, rtmp.Stream, *rtmp.Message) {
+	fmt.Printf("OnReceive\n")
+}
+
+func (h *handler) Invoke(conn rtmp.Conn, stream rtmp.Stream, cmd *rtmp.Command, invoke func(*rtmp.Command) error) error {
+	fmt.Printf("Invoke\n")
+	return invoke(cmd)
 }

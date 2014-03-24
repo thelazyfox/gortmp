@@ -5,7 +5,7 @@ package rtmp
 import (
 	"encoding/binary"
 	"errors"
-	"github.com/zhangpeihao/log"
+	"github.com/thelazyfox/gortmp/log"
 )
 
 // RTMP Chunk Header
@@ -56,6 +56,7 @@ type Header struct {
 func ReadBaseHeader(rbuf Reader) (n int, fmt uint8, csi uint32, err error) {
 	var b byte
 	b, err = ReadByteFromNetwork(rbuf)
+	log.Trace("One byte header read: %d", uint8(b))
 	if err != nil {
 		return
 	}
@@ -227,8 +228,8 @@ func (header *Header) ReadHeader(rbuf Reader, vfmt uint8, csi uint32, lastheader
 		}
 		n += 4
 		header.ExtendedTimestamp = binary.BigEndian.Uint32(tmpBuf)
-		logger.ModulePrintf(logHandler, log.LOG_LEVEL_TRACE,
-			"Extened timestamp: %d, timestamp: %d, fmt: %d\n", header.ExtendedTimestamp, header.Timestamp, header.Fmt)
+		// logger.ModulePrintf(logHandler, log.LOG_LEVEL_TRACE,
+		// 	"Extened timestamp: %d, timestamp: %d, fmt: %d\n", header.ExtendedTimestamp, header.Timestamp, header.Fmt)
 		header.Dump("Extended timestamp")
 	} else {
 		header.ExtendedTimestamp = 0
@@ -241,6 +242,7 @@ func (header *Header) Write(wbuf Writer) (n int, err error) {
 	// Write fmt & Chunk stream ID
 	switch {
 	case header.ChunkStreamID <= 63:
+		log.Trace("One Byte Basic Header: %x", byte((header.Fmt<<6)|byte(header.ChunkStreamID)))
 		err = wbuf.WriteByte(byte((header.Fmt << 6) | byte(header.ChunkStreamID)))
 		if err != nil {
 			return
@@ -332,6 +334,8 @@ func (header *Header) Write(wbuf Writer) (n int, err error) {
 		}
 		n += m
 	case HEADER_FMT_CONTINUATION:
+		// do nothing
+		return
 	}
 
 	// Type 3 chunks MUST NOT have Extended timestamp????
@@ -356,8 +360,8 @@ func (header *Header) RealTimestamp() uint32 {
 }
 
 func (header *Header) Dump(name string) {
-	logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
-		"Header(%s){Fmt: %d, ChunkStreamID: %d, Timestamp: %d, MessageLength: %d, MessageTypeID: %d, MessageStreamID: %d, ExtendedTimestamp: %d}\n", name,
-		header.Fmt, header.ChunkStreamID, header.Timestamp, header.MessageLength,
-		header.MessageTypeID, header.MessageStreamID, header.ExtendedTimestamp)
+	// logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
+	// 	"Header(%s){Fmt: %d, ChunkStreamID: %d, Timestamp: %d, MessageLength: %d, MessageTypeID: %d, MessageStreamID: %d, ExtendedTimestamp: %d}\n", name,
+	// 	header.Fmt, header.ChunkStreamID, header.Timestamp, header.MessageLength,
+	// 	header.MessageTypeID, header.MessageStreamID, header.ExtendedTimestamp)
 }

@@ -10,7 +10,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/zhangpeihao/log"
 	"io"
 	"math/rand"
 	"net"
@@ -217,8 +216,8 @@ func Handshake(c net.Conn, br *bufio.Reader, bw *bufio.Writer, timeout time.Dura
 	}
 	_, err = io.ReadAtLeast(br, s1, RTMP_SIG_SIZE)
 	CheckError(err, "Handshake Read S1")
-	logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
-		"Handshake() FMS version is %d.%d.%d.%d", s1[4], s1[5], s1[6], s1[7])
+	// logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
+	// 	"Handshake() FMS version is %d.%d.%d.%d", s1[4], s1[5], s1[6], s1[7])
 	//	if s1[4] < 3 {
 	//		return errors.New(fmt.Sprintf("FMS version is %d.%d.%d.%d, unsupported!", s1[4], s1[5], s1[6], s1[7]))
 	//	}
@@ -258,7 +257,7 @@ func Handshake(c net.Conn, br *bufio.Reader, bw *bufio.Writer, timeout time.Dura
 	c2 := CreateRandomBlock(RTMP_SIG_SIZE)
 	signatureResp, err := HMACsha256(c2[:RTMP_SIG_SIZE-SHA256_DIGEST_LENGTH], digestResp)
 	CheckError(err, "Generate C2 HMACsha256 signatureResp")
-	DumpBuffer("signatureResp", signatureResp, 0)
+	// DumpBuffer("signatureResp", signatureResp, 0)
 	for index, b := range signatureResp {
 		c2[RTMP_SIG_SIZE-SHA256_DIGEST_LENGTH+index] = b
 	}
@@ -323,20 +322,20 @@ func SHandshake(c net.Conn, br *bufio.Reader, bw *bufio.Writer, timeout time.Dur
 	}
 	_, err = io.ReadAtLeast(br, c1, RTMP_SIG_SIZE)
 	CheckError(err, "SHandshake Read C1")
-	logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
-		"SHandshake() Flash player version is %d.%d.%d.%d", c1[4], c1[5], c1[6], c1[7])
+	// logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
+	// 	"SHandshake() Flash player version is %d.%d.%d.%d", c1[4], c1[5], c1[6], c1[7])
 
-	scheme := 0
+	// scheme := 0
 	clientDigestOffset := ValidateDigest(c1, 8, GENUINE_FP_KEY[:30])
 	if clientDigestOffset == 0 {
 		clientDigestOffset = ValidateDigest(c1, 772, GENUINE_FP_KEY[:30])
 		if clientDigestOffset == 0 {
 			return errors.New("SHandshake C1 validating failed")
 		}
-		scheme = 1
+		// scheme = 1
 	}
-	logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
-		"SHandshake() scheme = %d", scheme)
+	// logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
+	// 	"SHandshake() scheme = %d", scheme)
 	digestResp, err := HMACsha256(c1[clientDigestOffset:clientDigestOffset+SHA256_DIGEST_LENGTH], GENUINE_FMS_KEY)
 	CheckError(err, "SHandshake Generate digestResp")
 
@@ -344,7 +343,7 @@ func SHandshake(c net.Conn, br *bufio.Reader, bw *bufio.Writer, timeout time.Dur
 	s2 := CreateRandomBlock(RTMP_SIG_SIZE)
 	signatureResp, err := HMACsha256(s2[:RTMP_SIG_SIZE-SHA256_DIGEST_LENGTH], digestResp)
 	CheckError(err, "SHandshake Generate S2 HMACsha256 signatureResp")
-	DumpBuffer("SHandshake signatureResp", signatureResp, 0)
+	// DumpBuffer("SHandshake signatureResp", signatureResp, 0)
 	for index, b := range signatureResp {
 		s2[RTMP_SIG_SIZE-SHA256_DIGEST_LENGTH+index] = b
 	}

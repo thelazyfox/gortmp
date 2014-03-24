@@ -4,7 +4,6 @@ package rtmp
 
 import (
 	"github.com/zhangpeihao/goamf"
-	"github.com/zhangpeihao/log"
 )
 
 // Command
@@ -14,6 +13,7 @@ import (
 // Calls (RPC) over streams that are communicated using the command
 // messages to the peer.
 type Command struct {
+	StreamID      uint32
 	IsFlex        bool
 	Name          string
 	TransactionID uint32
@@ -45,7 +45,7 @@ func (cmd *Command) Write(w Writer) (err error) {
 }
 
 func (cmd *Command) Dump() {
-	logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
-		"Command{IsFlex: %t, Name: %s, TransactionID: %d, Objects: %+v}\n",
-		cmd.IsFlex, cmd.Name, cmd.TransactionID, cmd.Objects)
+	// logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
+	// 	"Command{IsFlex: %t, Name: %s, TransactionID: %d, Objects: %+v}\n",
+	// 	cmd.IsFlex, cmd.Name, cmd.TransactionID, cmd.Objects)
 }

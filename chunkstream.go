@@ -3,116 +3,179 @@
 package rtmp
 
 import (
-	"github.com/zhangpeihao/log"
+	"bytes"
+	"encoding/binary"
+	"github.com/thelazyfox/gortmp/log"
 )
 
-// Chunk stream
-//
-// A logical channel of communication that allows flow of chunks in a
-// particular direction. The chunk stream can travel from the client
-// to the server and reverse.
-type OutboundChunkStream struct {
-	ID uint32
+//	"github.com/thelazyfox/gortmp/log"
 
-	lastHeader               *Header
-	lastOutAbsoluteTimestamp uint32
-	lastInAbsoluteTimestamp  uint32
+type ChunkStream interface {
+	ChunkStreamReader
+	ChunkStreamWriter
 
-	// Start at timestamp
-	startAt uint32
+	Close()
+
+	SendSetChunkSize(uint32) error
+	SendSetWindowSize(uint32) error
+	SendSetPeerBandwidth(uint32, uint8) error
+
+	OnMessage(msg *Message)
+	OnWindowFull(uint32)
 }
 
-type InboundChunkStream struct {
-	ID uint32
-
-	lastHeader               *Header
-	lastOutAbsoluteTimestamp uint32
-	lastInAbsoluteTimestamp  uint32
-
-	// The unfinished incoming message
-	receivedMessage *Message
+type ChunkStreamHandler interface {
+	OnMessage(msg *Message)
 }
 
-func NewOutboundChunkStream(id uint32) *OutboundChunkStream {
-	return &OutboundChunkStream{
-		ID: id,
-	}
+type chunkStream struct {
+	ChunkStreamReader
+	ChunkStreamWriter
+
+	handler ChunkStreamHandler
 }
 
-func NewInboundChunkStream(id uint32) *InboundChunkStream {
-	return &InboundChunkStream{
-		ID: id,
-	}
+func NewChunkStream(handler ChunkStreamHandler) ChunkStream {
+	cs := &chunkStream{handler: handler}
+	cs.ChunkStreamReader = NewChunkStreamReader(cs)
+	cs.ChunkStreamWriter = NewChunkStreamWriter()
+	return cs
 }
 
-func (chunkStream *OutboundChunkStream) NewOutboundHeader(message *Message) *Header {
-	header := &Header{
-		ChunkStreamID:   chunkStream.ID,
-		MessageLength:   uint32(message.Buf.Len()),
-		MessageTypeID:   message.Type,
-		MessageStreamID: message.StreamID,
-	}
-	timestamp := message.Timestamp
-	if timestamp == AUTO_TIMESTAMP {
-		timestamp = chunkStream.GetTimestamp()
-		message.Timestamp = timestamp
-		message.AbsoluteTimestamp = timestamp
-	}
-	deltaTimestamp := uint32(0)
-	if chunkStream.lastOutAbsoluteTimestamp < message.Timestamp {
-		deltaTimestamp = message.Timestamp - chunkStream.lastOutAbsoluteTimestamp
-	}
-	if chunkStream.lastHeader == nil {
-		header.Fmt = HEADER_FMT_FULL
-		header.Timestamp = timestamp
-	} else {
+func (cs *chunkStream) Close() {
+	panic("ChunkStream.Close() not implemented")
+}
 
-		if header.MessageStreamID == chunkStream.lastHeader.MessageStreamID {
-			if header.MessageTypeID == chunkStream.lastHeader.MessageTypeID &&
-				header.MessageLength == chunkStream.lastHeader.MessageLength {
-				switch chunkStream.lastHeader.Fmt {
-				case HEADER_FMT_FULL:
-					header.Fmt = HEADER_FMT_SAME_LENGTH_AND_STREAM
-					header.Timestamp = deltaTimestamp
-				case HEADER_FMT_SAME_STREAM:
-					fallthrough
-				case HEADER_FMT_SAME_LENGTH_AND_STREAM:
-					fallthrough
-				case HEADER_FMT_CONTINUATION:
-					if chunkStream.lastHeader.Timestamp == deltaTimestamp {
-						header.Fmt = HEADER_FMT_CONTINUATION
-					} else {
-						header.Fmt = HEADER_FMT_SAME_LENGTH_AND_STREAM
-						header.Timestamp = deltaTimestamp
-					}
-				}
-			} else {
-				header.Fmt = HEADER_FMT_SAME_STREAM
-				header.Timestamp = deltaTimestamp
-			}
-		} else {
-			header.Fmt = HEADER_FMT_FULL
-			header.Timestamp = timestamp
+func (cs *chunkStream) OnMessage(msg *Message) {
+	if msg.ChunkStreamID == CS_ID_PROTOCOL_CONTROL {
+		switch msg.Type {
+		case SET_CHUNK_SIZE:
+			return // handled in ChunkStreamReader
+		case WINDOW_ACKNOWLEDGEMENT_SIZE:
+			return // handled in ChunkStreamReader
 		}
 	}
-	// Check extended timestamp
-	if header.Timestamp >= 0xffffff {
-		header.ExtendedTimestamp = message.Timestamp
-		header.Timestamp = 0xffffff
-	} else {
-		header.ExtendedTimestamp = 0
-	}
-	logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
-		"OutboundChunkStream::NewOutboundHeader() header: %+v\n", header)
-	chunkStream.lastHeader = header
-	chunkStream.lastOutAbsoluteTimestamp = timestamp
-	return header
+
+	cs.handler.OnMessage(msg)
 }
 
-func (chunkStream *OutboundChunkStream) GetTimestamp() uint32 {
-	if chunkStream.startAt == uint32(0) {
-		chunkStream.startAt = GetTimestamp()
-		return uint32(0)
-	}
-	return GetTimestamp() - chunkStream.startAt
+func (cs *chunkStream) OnWindowFull(count uint32) {
+	go func() {
+		err := cs.sendAcknowledgement(count)
+		if err != nil {
+			log.Debug("Error sending window ack: %s", err)
+		}
+	}()
 }
+
+func (cs *chunkStream) SendSetPeerBandwidth(bw uint32, limit uint8) error {
+	buf := new(bytes.Buffer)
+
+	err := binary.Write(buf, binary.BigEndian, bw)
+	if err != nil {
+		return err
+	}
+
+	err = binary.Write(buf, binary.BigEndian, limit)
+	if err != nil {
+		return err
+	}
+
+	msg := &Message{
+		ChunkStreamID:     CS_ID_PROTOCOL_CONTROL,
+		Type:              SET_PEER_BANDWIDTH,
+		StreamID:          0,
+		AbsoluteTimestamp: 0,
+		Buf:               buf,
+		Size:              uint32(buf.Len()),
+	}
+
+	return cs.Write(msg)
+}
+
+func (cs *chunkStream) SendSetWindowSize(size uint32) error {
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.BigEndian, size)
+
+	if err != nil {
+		return err
+	}
+
+	msg := &Message{
+		ChunkStreamID:     CS_ID_PROTOCOL_CONTROL,
+		Type:              WINDOW_ACKNOWLEDGEMENT_SIZE,
+		StreamID:          0,
+		AbsoluteTimestamp: 0,
+		Buf:               buf,
+		Size:              uint32(buf.Len()),
+	}
+
+	log.Trace("SetChunkSize: %+v", msg)
+	log.Trace("Buf: %#v len=%d", buf, buf.Len())
+
+	return cs.Write(msg)
+}
+
+func (cs *chunkStream) SendSetChunkSize(chunkSize uint32) error {
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.BigEndian, &chunkSize)
+
+	if err != nil {
+		return err
+	}
+
+	msg := &Message{
+		ChunkStreamID:     CS_ID_PROTOCOL_CONTROL,
+		Type:              SET_CHUNK_SIZE,
+		StreamID:          0,
+		AbsoluteTimestamp: 0,
+		Buf:               buf,
+		Size:              uint32(buf.Len()),
+	}
+
+	return cs.Write(msg)
+}
+
+func (cs *chunkStream) sendAcknowledgement(inCount uint32) error {
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.BigEndian, inCount)
+
+	if err != nil {
+		return err
+	}
+
+	msg := &Message{
+		ChunkStreamID:     CS_ID_PROTOCOL_CONTROL,
+		Type:              ACKNOWLEDGEMENT,
+		StreamID:          0,
+		AbsoluteTimestamp: 0,
+		Buf:               buf,
+		Size:              uint32(buf.Len()),
+	}
+
+	return cs.Write(msg)
+}
+
+func (cs *chunkStream) sendWindowAcknowledgementSize(cnt uint32) error {
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.BigEndian, cnt)
+
+	if err != nil {
+		return err
+	}
+
+	msg := &Message{
+		ChunkStreamID:     CS_ID_PROTOCOL_CONTROL,
+		Type:              ACKNOWLEDGEMENT,
+		StreamID:          0,
+		AbsoluteTimestamp: 0,
+		Buf:               buf,
+		Size:              uint32(buf.Len()),
+	}
+
+	return cs.Write(msg)
+}
+
+/*func (cs *chunkStream) handleMessage(msg *Message) {
+
+}*/

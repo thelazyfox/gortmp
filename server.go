@@ -1,108 +1,81 @@
-// Copyright 2013, zhangpeihao All rights reserved.
 package rtmp
 
-import (
-	"bufio"
-	"github.com/zhangpeihao/log"
-	"net"
-	"time"
-)
+// import (
+// 	"fmt"
+// 	"github.com/thelazyfox/gortmp/log"
+// 	"net"
+// )
 
-type ServerHandler interface {
-	NewConnection(conn InboundConn, connectReq *Command, server *Server) bool
-}
+// type Server interface {
+// 	Listen(net.Listener) error
+// }
 
-type Server struct {
-	listener    net.Listener
-	network     string
-	bindAddress string
-	exit        bool
-	handler     ServerHandler
-}
+// type ServerConnection interface {
+// 	Server() Server
+// }
 
-// Create a new server.
-func NewServer(network string, bindAddress string, handler ServerHandler) (*Server, error) {
-	server := &Server{
-		network:     network,
-		bindAddress: bindAddress,
-		exit:        false,
-		handler:     handler,
-	}
-	var err error
-	server.listener, err = net.Listen(server.network, server.bindAddress)
-	if err != nil {
-		return nil, err
-	}
-	logger.ModulePrintln(logHandler, log.LOG_LEVEL_DEBUG,
-		"Start listen...")
-	go server.mainLoop()
-	return server, nil
-}
+// type ServerStream interface {
+// 	Connection() ServerConnection
+// }
 
-// Close listener.
-func (server *Server) Close() {
-	logger.ModulePrintln(logHandler, log.LOG_LEVEL_TRACE,
-		"Stop server")
-	server.exit = true
-	server.listener.Close()
-}
+// type ServerHandler interface {
+// 	ConnHandler
+// }
 
-func (server *Server) mainLoop() {
-	for !server.exit {
-		c, err := server.listener.Accept()
-		if err != nil {
-			if server.exit {
-				break
-			}
-			logger.ModulePrintln(logHandler, log.LOG_LEVEL_WARNING,
-				"SocketServer listener error:", err)
-			server.rebind()
-		}
-		if c != nil {
-			go server.Handshake(c)
-		}
-	}
-}
+// type server struct {
+// 	handler ServerHandler
+// }
 
-func (server *Server) rebind() {
-	listener, err := net.Listen(server.network, server.bindAddress)
-	if err == nil {
-		server.listener = listener
-	} else {
-		time.Sleep(time.Second)
-	}
-}
+// func NewServer(handler ServerHandler) Server {
+// 	return &server{handler: handler}
+// }
 
-func (server *Server) Handshake(c net.Conn) {
-	defer func() {
-		if r := recover(); r != nil {
-			err := r.(error)
-			logger.ModulePrintln(logHandler, log.LOG_LEVEL_WARNING,
-				"Server::Handshake panic error:", err)
-		}
-	}()
-	logger.ModulePrintln(logHandler, log.LOG_LEVEL_DEBUG,
-		"Handshake begin")
-	br := bufio.NewReader(c)
-	bw := bufio.NewWriter(c)
-	timeout := time.Duration(10) * time.Second
-	if err := SHandshake(c, br, bw, timeout); err != nil {
-		logger.ModulePrintln(logHandler, log.LOG_LEVEL_WARNING,
-			"SHandshake error:", err)
-		c.Close()
-		return
-	}
-	// New inbound connection
-	_, err := NewInboundConn(c, br, bw, server, 100)
-	if err != nil {
-		logger.ModulePrintln(logHandler, log.LOG_LEVEL_WARNING,
-			"NewInboundConn error:", err)
-		c.Close()
-		return
-	}
-}
+// func (s *server) Listen(ln net.Listener) error {
+// 	for {
+// 		conn, err := ln.Accept()
 
-// On received connect request
-func (server *Server) OnConnectAuth(conn InboundConn, connectReq *Command) bool {
-	return server.handler.NewConnection(conn, connectReq, server)
-}
+// 		if err != nil {
+// 			netErr, ok := err.(net.Error)
+// 			if !ok || !netErr.Temporary() {
+// 				return err
+// 			}
+// 		}
+
+// 		go s.handle(conn)
+// 	}
+// }
+
+// func (s *server) Invoke(c Conn, cmd *Command) error {
+// 	// somewhat confusing, all this does is start the callback chain
+// 	return s.handler.Invoke(c, cmd, func(cmd *Command) error {
+// 		return s.invoke(c, cmd)
+// 	})
+// }
+
+// func (s *server) invoke(c Conn, cmd *Command) error {
+// 	// if cmd.StreamID
+// 	// switch cmd.Name {
+// 	// 	case ""
+// 	// }
+// }
+
+// func (s *server) OnMessage(c Conn, msg *Message) {
+
+// }
+
+// func (s *server) OnClose(c Conn) {
+
+// }
+
+// func (s *server) handle(conn net.Conn) {
+// 	err := s.handshake(conn)
+// 	if err != nil {
+// 		log.Error("handshake failure")
+// 	}
+
+// 	rtmpConn := NewConn(conn, s)
+// }
+
+// func (s *server) handshake(conn net.Conn) error {
+// 	return fmt.Errorf("handshake not implemented")
+// }
