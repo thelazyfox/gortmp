@@ -13,66 +13,6 @@ import (
 
 // Stream
 
-type ConnCounter struct {
-	net.Conn
-	counter int
-	sync.Mutex
-}
-
-type NetReadWriter struct {
-	net.Conn
-}
-
-func (n *NetReadWriter) ReadByte() (byte, error) {
-	b := []byte{0}
-
-	_, err := n.Read(b)
-	return b[0], err
-}
-
-func (n *NetReadWriter) WriteByte(c byte) error {
-	b := []byte{c}
-	_, err := n.Write(b)
-	return err
-}
-
-func (c *ConnCounter) Read(buf []byte) (int, error) {
-	n, err := c.Conn.Read(buf)
-
-	c.Lock()
-	c.counter += n
-	fmt.Printf("ConnCounter: %d\n", c.counter)
-	c.Unlock()
-
-	return n, err
-}
-
-type Stream interface {
-	ID() uint32
-	Conn() Conn
-}
-
-type stream struct {
-	id   uint32
-	csid uint32
-	conn Conn
-}
-
-func NewStream(id uint32, conn Conn) Stream {
-	return &stream{
-		id:   id,
-		conn: conn,
-	}
-}
-
-func (s *stream) ID() uint32 {
-	return s.id
-}
-
-func (s *stream) Conn() Conn {
-	return s.conn
-}
-
 type Conn interface {
 	Send(msg *Message) error
 	SendCommand(cmd *Command) error
@@ -152,7 +92,7 @@ func NewConn(netConn net.Conn, rw *bufio.ReadWriter, handler ConnHandler) Conn {
 
 func (c *conn) Send(msg *Message) error {
 	//TODO implement better
-	return c.chunkStream.Write(msg)
+	return c.chunkStream.Send(msg)
 }
 
 func (c *conn) SendCommand(cmd *Command) error {
@@ -219,14 +159,13 @@ func (c *conn) SendStreamBegin(streamId uint32) {
 		AbsoluteTimestamp: 0,
 	}
 
-	err = c.chunkStream.Write(msg)
+	err = c.chunkStream.Send(msg)
 	if err != nil {
 		c.Error(err)
 	}
 }
 
 func (c *conn) SetChunkSize(size uint32) {
-	log.Trace("SetChunkSize: %d", size)
 	err := func() error {
 		err := c.chunkStream.SendSetChunkSize(size)
 		if err != nil {

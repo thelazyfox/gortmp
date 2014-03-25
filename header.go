@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"github.com/thelazyfox/gortmp/log"
+	"io"
 )
 
 // RTMP Chunk Header
@@ -55,7 +56,7 @@ type Header struct {
 // High level protocol can use chunk stream ID to query the previous header instance.
 func ReadBaseHeader(rbuf Reader) (n int, fmt uint8, csi uint32, err error) {
 	var b byte
-	b, err = ReadByteFromNetwork(rbuf)
+	b, err = rbuf.ReadByte()
 	log.Trace("One byte header read: %d", uint8(b))
 	if err != nil {
 		return
@@ -67,7 +68,7 @@ func ReadBaseHeader(rbuf Reader) (n int, fmt uint8, csi uint32, err error) {
 	case 0:
 		// Chunk stream IDs 64-319 can be encoded in the 2-byte version of this
 		// field. ID is computed as (the second byte + 64).
-		b, err = ReadByteFromNetwork(rbuf)
+		b, err = rbuf.ReadByte()
 		if err != nil {
 			return
 		}
@@ -77,13 +78,13 @@ func ReadBaseHeader(rbuf Reader) (n int, fmt uint8, csi uint32, err error) {
 		// Chunk stream IDs 64-65599 can be encoded in the 3-byte version of
 		// this field. ID is computed as ((the third byte)*256 + the second byte
 		// + 64).
-		b, err = ReadByteFromNetwork(rbuf)
+		b, err = rbuf.ReadByte()
 		if err != nil {
 			return
 		}
 		n += 1
 		csi = uint32(64) + uint32(b)
-		b, err = ReadByteFromNetwork(rbuf)
+		b, err = rbuf.ReadByte()
 		if err != nil {
 			return
 		}
@@ -119,25 +120,25 @@ func (header *Header) ReadHeader(rbuf Reader, vfmt uint8, csi uint32, lastheader
 		// |           message stream id (cont)            |
 		// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 		//       Figure 9 Chunk Message Header – Type 0
-		_, err = ReadAtLeastFromNetwork(rbuf, tmpBuf[1:], 3)
+		_, err = io.ReadFull(rbuf, tmpBuf[1:4])
 		if err != nil {
 			return
 		}
 		n += 3
 		header.Timestamp = binary.BigEndian.Uint32(tmpBuf)
-		_, err = ReadAtLeastFromNetwork(rbuf, tmpBuf[1:], 3)
+		_, err = io.ReadFull(rbuf, tmpBuf[1:4])
 		if err != nil {
 			return
 		}
 		n += 3
 		header.MessageLength = binary.BigEndian.Uint32(tmpBuf)
-		b, err = ReadByteFromNetwork(rbuf)
+		b, err = rbuf.ReadByte()
 		if err != nil {
 			return
 		}
 		n += 1
 		header.MessageTypeID = uint8(b)
-		_, err = ReadAtLeastFromNetwork(rbuf, tmpBuf, 4)
+		_, err = io.ReadFull(rbuf, tmpBuf)
 		if err != nil {
 			return
 		}
@@ -158,19 +159,19 @@ func (header *Header) ReadHeader(rbuf Reader, vfmt uint8, csi uint32, lastheader
 		// |     message length (cont)     |message type id|
 		// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 		//       Figure 10 Chunk Message Header – Type 1
-		_, err = ReadAtLeastFromNetwork(rbuf, tmpBuf[1:], 3)
+		_, err = io.ReadFull(rbuf, tmpBuf[1:4])
 		if err != nil {
 			return
 		}
 		n += 3
 		header.Timestamp = binary.BigEndian.Uint32(tmpBuf)
-		_, err = ReadAtLeastFromNetwork(rbuf, tmpBuf[1:], 3)
+		_, err = io.ReadFull(rbuf, tmpBuf[1:4])
 		if err != nil {
 			return
 		}
 		n += 3
 		header.MessageLength = binary.BigEndian.Uint32(tmpBuf)
-		b, err = ReadByteFromNetwork(rbuf)
+		b, err = rbuf.ReadByte()
 		if err != nil {
 			return
 		}
@@ -190,7 +191,7 @@ func (header *Header) ReadHeader(rbuf Reader, vfmt uint8, csi uint32, lastheader
 		// |                timestamp delta                |
 		// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 		//       Figure 11 Chunk Message Header – Type 2
-		_, err = ReadAtLeastFromNetwork(rbuf, tmpBuf[1:], 3)
+		_, err = io.ReadFull(rbuf, tmpBuf[1:4])
 		if err != nil {
 			return
 		}
@@ -222,7 +223,7 @@ func (header *Header) ReadHeader(rbuf Reader, vfmt uint8, csi uint32, lastheader
 	// Todo: Test with FMS
 	if (header.Fmt != HEADER_FMT_CONTINUATION && header.Timestamp >= 0xffffff) ||
 		(header.Fmt == HEADER_FMT_CONTINUATION && lastheader != nil && lastheader.ExtendedTimestamp > 0) {
-		_, err = ReadAtLeastFromNetwork(rbuf, tmpBuf, 4)
+		_, err = io.ReadFull(rbuf, tmpBuf)
 		if err != nil {
 			return
 		}

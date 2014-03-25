@@ -2,26 +2,30 @@ package rtmp
 
 import (
 	"encoding/binary"
-	"fmt"
-	"github.com/thelazyfox/gortmp/log"
+	"errors"
 	"io"
-	"net"
 	"sync"
 )
 
-type ChunkStreamPriority int
-
 const (
-	HighPriority   ChunkStreamPriority = iota
-	MediumPriority                     = iota
-	LowPriority                        = iota
+	HighPriority   = iota
+	MediumPriority = iota
+	LowPriority    = iota
+)
+
+var (
+	ErrInvalidPriority      = errors.New("chunk error: invalid priority")
+	ErrInvalidChunkStreamID = errors.New("chunk error: stream id")
+	ErrInvalidChunk         = errors.New("chunk error: invalid chunk")
+	ErrMaxChunkStreams      = errors.New("chunk error: maximum chunk streams reached")
 )
 
 type ChunkStreamWriter interface {
 	WriteTo(w Writer) (int64, error)
-	Write(*Message) error
+	Send(*Message) error
+	Close()
 
-	CreateChunkStream(ChunkStreamPriority) (uint32, error)
+	CreateChunkStream(int) (uint32, error)
 }
 
 type messageWriter func(w Writer) (int64, error)
@@ -30,14 +34,13 @@ type chunkStreamWriter struct {
 	chunkSize  uint32
 	windowSize uint32
 
-	chunkStreams      map[uint32]*outChunkStream
-	chunkStreamsMutex sync.RWMutex
+	chunkStreams map[uint32]*outChunkStream
 
 	highPriority   chan messageWriter
 	mediumPriority chan messageWriter
 	lowPriority    chan messageWriter
 
-	done chan bool
+	mu sync.RWMutex
 }
 
 type outChunkStream struct {
@@ -64,13 +67,12 @@ func NewChunkStreamWriter() ChunkStreamWriter {
 		highPriority:   high,
 		mediumPriority: medium,
 		lowPriority:    low,
-		done:           make(chan bool),
 	}
 
 	return csw
 }
 
-func (csw *chunkStreamWriter) CreateChunkStream(p ChunkStreamPriority) (uint32, error) {
+func (csw *chunkStreamWriter) CreateChunkStream(p int) (uint32, error) {
 	// make sure the priority is valid
 	var queue chan messageWriter
 	switch p {
@@ -81,11 +83,11 @@ func (csw *chunkStreamWriter) CreateChunkStream(p ChunkStreamPriority) (uint32, 
 	case LowPriority:
 		queue = csw.lowPriority
 	default:
-		return 0, fmt.Errorf("invalid chunk stream priority")
+		return 0, ErrInvalidPriority
 	}
 
-	csw.chunkStreamsMutex.Lock()
-	defer csw.chunkStreamsMutex.Unlock()
+	csw.mu.Lock()
+	defer csw.mu.Unlock()
 
 	var i uint32 = CS_ID_BASE
 
@@ -99,18 +101,34 @@ func (csw *chunkStreamWriter) CreateChunkStream(p ChunkStreamPriority) (uint32, 
 		}
 	}
 
-	return 0, fmt.Errorf("maximum number of chunk streams reached")
+	return 0, ErrMaxChunkStreams
+}
+
+func (csw *chunkStreamWriter) Close() {
+	close(csw.highPriority)
+	close(csw.mediumPriority)
+	close(csw.lowPriority)
 }
 
 func (csw *chunkStreamWriter) WriteTo(w Writer) (int64, error) {
 	var outBytes int64
 	var writer messageWriter
+	var ok bool
 
 	for {
 		select {
-		case writer = <-csw.highPriority:
-		case writer = <-csw.mediumPriority:
-		case writer = <-csw.lowPriority:
+		case writer, ok = <-csw.highPriority:
+			if !ok {
+				return outBytes, nil
+			}
+		case writer, ok = <-csw.mediumPriority:
+			if !ok {
+				return outBytes, nil
+			}
+		case writer, ok = <-csw.lowPriority:
+			if !ok {
+				return outBytes, nil
+			}
 		}
 
 		n, err := writer(w)
@@ -124,14 +142,13 @@ func (csw *chunkStreamWriter) WriteTo(w Writer) (int64, error) {
 	return outBytes, nil
 }
 
-func (csw *chunkStreamWriter) Write(msg *Message) error {
-	log.Trace("Write: %+v", msg)
-	csw.chunkStreamsMutex.RLock()
+func (csw *chunkStreamWriter) Send(msg *Message) error {
+	csw.mu.RLock()
 	cs, ok := csw.chunkStreams[msg.ChunkStreamID]
-	csw.chunkStreamsMutex.RUnlock()
+	csw.mu.RUnlock()
 
 	if !ok {
-		return fmt.Errorf("invalid chunk stream specified")
+		return ErrInvalidChunkStreamID
 	}
 
 	done := make(chan error)
@@ -152,7 +169,6 @@ func (csw *chunkStreamWriter) Write(msg *Message) error {
 }
 
 func (csw *chunkStreamWriter) writeMessage(w Writer, msg *Message, cs *outChunkStream) (int64, error) {
-	log.Trace("writeMessage: %x %#v", msg.Buf.Bytes(), *msg)
 	var written int64
 
 	cs.currentMessage = msg
@@ -191,7 +207,6 @@ func (csw *chunkStreamWriter) writeChunk(w Writer, cs *outChunkStream) (int64, e
 	count += int64(n)
 
 	if err != nil {
-		log.Debug("writeChunk error writing header: %s", err)
 		return count, err
 	}
 
@@ -201,36 +216,24 @@ func (csw *chunkStreamWriter) writeChunk(w Writer, cs *outChunkStream) (int64, e
 		remain = csw.chunkSize
 	}
 
-	log.Trace("writeChunk msg=%#v", *cs.currentMessage)
-	log.Trace("writeChunk remain = %d", remain)
-
 	var tmpChunkSize uint32
 
 	if cs.currentMessage.Type == SET_CHUNK_SIZE {
 		tmpChunkSize = binary.BigEndian.Uint32(cs.currentMessage.Buf.Bytes())
 	}
 
-	var copied uint32
-	for copied < remain {
-		n, err := io.CopyN(w, cs.currentMessage.Buf, int64(remain))
-		copied += uint32(n)
+	n64, err := io.CopyN(w, cs.currentMessage.Buf, int64(remain))
+	count += n64
 
-		if err != nil {
-			netErr, ok := err.(net.Error)
-			if !ok || !netErr.Temporary() {
-				return int64(copied) + count, err
-			}
-		}
-
-		remain -= uint32(n)
+	if err != nil {
+		return count, err
 	}
 
 	if tmpChunkSize != 0 {
 		csw.chunkSize = tmpChunkSize
 	}
 
-	log.Trace("writeChunk len=%d", int64(copied)+count)
-	return int64(copied) + count, nil
+	return count, nil
 }
 
 func (cs *outChunkStream) newHeader() *Header {
@@ -287,8 +290,6 @@ func (cs *outChunkStream) newHeader() *Header {
 	} else {
 		header.ExtendedTimestamp = 0
 	}
-
-	log.Trace("header = %#v", *header)
 
 	cs.lastHeader = header
 	cs.lastAbsoluteTimestamp = timestamp

@@ -1,5 +1,3 @@
-// Copyright 2013, zhangpeihao All rights reserved.
-
 package rtmp
 
 import (
@@ -8,13 +6,9 @@ import (
 	"github.com/thelazyfox/gortmp/log"
 )
 
-//	"github.com/thelazyfox/gortmp/log"
-
 type ChunkStream interface {
 	ChunkStreamReader
 	ChunkStreamWriter
-
-	Close()
 
 	SendSetChunkSize(uint32) error
 	SendSetWindowSize(uint32) error
@@ -40,10 +34,6 @@ func NewChunkStream(handler ChunkStreamHandler) ChunkStream {
 	cs.ChunkStreamReader = NewChunkStreamReader(cs)
 	cs.ChunkStreamWriter = NewChunkStreamWriter()
 	return cs
-}
-
-func (cs *chunkStream) Close() {
-	panic("ChunkStream.Close() not implemented")
 }
 
 func (cs *chunkStream) OnMessage(msg *Message) {
@@ -90,7 +80,7 @@ func (cs *chunkStream) SendSetPeerBandwidth(bw uint32, limit uint8) error {
 		Size:              uint32(buf.Len()),
 	}
 
-	return cs.Write(msg)
+	return cs.Send(msg)
 }
 
 func (cs *chunkStream) SendSetWindowSize(size uint32) error {
@@ -113,7 +103,7 @@ func (cs *chunkStream) SendSetWindowSize(size uint32) error {
 	log.Trace("SetChunkSize: %+v", msg)
 	log.Trace("Buf: %#v len=%d", buf, buf.Len())
 
-	return cs.Write(msg)
+	return cs.Send(msg)
 }
 
 func (cs *chunkStream) SendSetChunkSize(chunkSize uint32) error {
@@ -133,7 +123,7 @@ func (cs *chunkStream) SendSetChunkSize(chunkSize uint32) error {
 		Size:              uint32(buf.Len()),
 	}
 
-	return cs.Write(msg)
+	return cs.Send(msg)
 }
 
 func (cs *chunkStream) sendAcknowledgement(inCount uint32) error {
@@ -153,7 +143,7 @@ func (cs *chunkStream) sendAcknowledgement(inCount uint32) error {
 		Size:              uint32(buf.Len()),
 	}
 
-	return cs.Write(msg)
+	return cs.Send(msg)
 }
 
 func (cs *chunkStream) sendWindowAcknowledgementSize(cnt uint32) error {
@@ -173,9 +163,5 @@ func (cs *chunkStream) sendWindowAcknowledgementSize(cnt uint32) error {
 		Size:              uint32(buf.Len()),
 	}
 
-	return cs.Write(msg)
+	return cs.Send(msg)
 }
-
-/*func (cs *chunkStream) handleMessage(msg *Message) {
-
-}*/

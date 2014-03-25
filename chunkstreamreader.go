@@ -3,10 +3,12 @@ package rtmp
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
-	"github.com/thelazyfox/gortmp/log"
+	"errors"
 	"io"
-	"net"
+)
+
+var (
+	ErrInvalidChunkHeader = errors.New("chunk error: invalid header")
 )
 
 type ChunkStreamReader interface {
@@ -37,7 +39,6 @@ type chunkStreamReader struct {
 }
 
 func NewChunkStreamReader(handler ChunkStreamReaderHandler) ChunkStreamReader {
-	log.Trace("NewChunkStreamReader")
 	return &chunkStreamReader{
 		chunkSize:    DEFAULT_CHUNK_SIZE,
 		windowSize:   DEFAULT_WINDOW_SIZE,
@@ -55,11 +56,8 @@ func (csr *chunkStreamReader) ReadFrom(r Reader) (int64, error) {
 		inBytes += n
 
 		if err != nil {
-			log.Info("ReadFrom exited after %d bytes", inBytes)
 			return inBytes, err
 		}
-
-		log.Trace("read %d bytes", inBytes)
 
 		if inBytes >= (inBytesPreWindow + int64(csr.windowSize)) {
 			csr.handler.OnWindowFull(uint32(inBytes))
@@ -76,7 +74,7 @@ func (csr *chunkStreamReader) handleMessage(msg *Message) {
 		case WINDOW_ACKNOWLEDGEMENT_SIZE:
 			csr.windowSize = binary.BigEndian.Uint32(msg.Buf.Bytes())
 		case ABORT_MESSAGE:
-			log.Debug("ABORT_MESSAGE not supported")
+			// not supported
 		}
 	}
 
@@ -84,21 +82,17 @@ func (csr *chunkStreamReader) handleMessage(msg *Message) {
 }
 
 func (csr *chunkStreamReader) readChunk(r Reader) (int64, error) {
-	log.Trace("readChunk")
 	var inCount int64
 	// Read base header
 	n, vfmt, csi, err := ReadBaseHeader(r)
 	inCount += int64(n)
 	if err != nil {
-		log.Debug("ReadBaseHeader error: %s", err)
 		return inCount, err
 	}
-	log.Trace("ReadBaseHeader - n: %d, vfmt: %d, csi: %d", n, vfmt, csi)
 
 	// Get the chunk stream
 	chunkstream, found := csr.chunkStreams[csi]
 	if !found || chunkstream == nil {
-		log.Trace("New chunk stream - csi: %d, fmt: %d", csi, vfmt)
 		chunkstream = &inChunkStream{id: csi}
 		csr.chunkStreams[csi] = chunkstream
 	}
@@ -107,12 +101,9 @@ func (csr *chunkStreamReader) readChunk(r Reader) (int64, error) {
 	header := &Header{}
 	n, err = header.ReadHeader(r, vfmt, csi, chunkstream.lastHeader)
 	if err != nil {
-		log.Debug("ReadHeader error: %s", err)
 		return inCount, err
 	}
 	inCount += int64(n)
-
-	log.Trace("ReadHeader: %#v", *header)
 
 	var absoluteTimestamp uint32
 	var message *Message
@@ -122,8 +113,7 @@ func (csr *chunkStreamReader) readChunk(r Reader) (int64, error) {
 		absoluteTimestamp = header.Timestamp
 	case HEADER_FMT_SAME_STREAM:
 		if chunkstream.lastHeader == nil {
-			log.Debug("invalid chunk header vfmt: %d, csi: %d, lastHeader: nil", vfmt, csi)
-			return inCount, fmt.Errorf("Chunk stream error: invalid header")
+			return inCount, ErrInvalidChunkHeader
 		}
 
 		header.MessageStreamID = chunkstream.lastHeader.MessageStreamID
@@ -131,8 +121,7 @@ func (csr *chunkStreamReader) readChunk(r Reader) (int64, error) {
 		absoluteTimestamp = chunkstream.lastAbsoluteTimestamp + header.Timestamp
 	case HEADER_FMT_SAME_LENGTH_AND_STREAM:
 		if chunkstream.lastHeader == nil {
-			log.Debug("invalid chunk header vfmt: %d, csi: %d, lastHeader: nil", vfmt, csi)
-			return inCount, fmt.Errorf("Chunk stream error: invalid header")
+			return inCount, ErrInvalidChunkHeader
 		}
 
 		header.MessageStreamID = chunkstream.lastHeader.MessageStreamID
@@ -146,8 +135,7 @@ func (csr *chunkStreamReader) readChunk(r Reader) (int64, error) {
 			message = chunkstream.currentMessage
 		}
 		if chunkstream.lastHeader == nil {
-			log.Debug("invalid chunk header vfmt: %d, csi: %d, lastHeader: nil", vfmt, csi)
-			return inCount, fmt.Errorf("Chunk stream error: invalid header")
+			return inCount, ErrInvalidChunkHeader
 		}
 		header.MessageStreamID = chunkstream.lastHeader.MessageStreamID
 		header.MessageLength = chunkstream.lastHeader.MessageLength
@@ -158,10 +146,7 @@ func (csr *chunkStreamReader) readChunk(r Reader) (int64, error) {
 		absoluteTimestamp = chunkstream.lastAbsoluteTimestamp
 	}
 
-	log.Trace("header = %#v", *header)
-
 	if message == nil {
-		log.Trace("starting a new message")
 		message = &Message{
 			ChunkStreamID:     csi,
 			Type:              header.MessageTypeID,
@@ -184,22 +169,11 @@ func (csr *chunkStreamReader) readChunk(r Reader) (int64, error) {
 		remain = csr.chunkSize
 	}
 
-	for remain > 0 {
-		n, err := io.CopyN(message.Buf, r, int64(remain))
-		inCount += n
-		remain -= uint32(n)
+	n64, err := io.CopyN(message.Buf, r, int64(remain))
+	inCount += n64
 
-		if err != nil {
-			netErr, ok := err.(net.Error)
-			if !ok || !netErr.Temporary() {
-				log.Debug("readChunk io error: %s", err)
-				return inCount, err
-			} else {
-				log.Debug("readChunk temporary: %s", err)
-				log.Debug("msg = %#v", *message)
-				log.Debug("len = %d", message.Buf.Len())
-			}
-		}
+	if err != nil {
+		return inCount, err
 	}
 
 	if lastChunk {
@@ -209,6 +183,5 @@ func (csr *chunkStreamReader) readChunk(r Reader) (int64, error) {
 		chunkstream.currentMessage = message
 	}
 
-	log.Trace("read %d bytes", inCount)
 	return inCount, nil
 }

@@ -47,6 +47,12 @@ var (
 	}
 )
 
+func CheckError(err error, tag string) {
+	if err != nil {
+		panic(fmt.Errorf("%s: %s", tag, err))
+	}
+}
+
 func HMACsha256(msgBytes []byte, key []byte) ([]byte, error) {
 	h := hmac.New(sha256.New, key)
 	_, err := h.Write(msgBytes)
