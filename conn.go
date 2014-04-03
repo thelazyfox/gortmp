@@ -6,22 +6,27 @@ import (
 	"fmt"
 	"github.com/thelazyfox/gortmp/log"
 	"github.com/zhangpeihao/goamf"
+	"net"
 )
 
 // Stream
 
 type Conn interface {
+	// basics
 	Send(msg *Message) error
 	SendCommand(cmd *Command) error
-
-	Flush() error
-
-	SendStreamBegin(uint32)
-
-	App() string
-
 	Error(err error)
 	Close()
+
+	// probably should be private
+	SendStreamBegin(uint32)
+
+	// net ops
+	Flush() error
+	Addr() net.Addr
+
+	// useful properties
+	App() string
 
 	SetChunkSize(uint32)
 	SetWindowSize(uint32)
@@ -95,6 +100,10 @@ func (c *conn) SendCommand(cmd *Command) error {
 	}
 
 	return c.netConn.Flush()
+}
+
+func (c *conn) Addr() net.Addr {
+	return c.netConn.Conn().RemoteAddr()
 }
 
 func (c *conn) Flush() error {
