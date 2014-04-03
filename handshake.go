@@ -280,14 +280,14 @@ func Handshake(c net.Conn, br *bufio.Reader, bw *bufio.Writer, timeout time.Dura
 	return
 }
 
-func SHandshake(c net.Conn, br *bufio.Reader, bw *bufio.Writer, timeout time.Duration) (err error) {
+func SHandshake(conn NetConn) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = r.(error)
 		}
 	}()
 	// Send S0+S1
-	err = bw.WriteByte(0x03)
+	err = conn.WriteByte(0x03)
 	CheckError(err, "SHandshake() Send S0")
 	s1 := CreateRandomBlock(RTMP_SIG_SIZE)
 	// Set Timestamp
@@ -303,19 +303,14 @@ func SHandshake(c net.Conn, br *bufio.Reader, bw *bufio.Writer, timeout time.Dur
 		return errors.New("ImprintWithDigest failed")
 	}
 
-	_, err = bw.Write(s1)
+	_, err = conn.Write(s1)
 	CheckError(err, "SHandshake() Send S1")
-	if timeout > 0 {
-		c.SetWriteDeadline(time.Now().Add(timeout))
-	}
-	err = bw.Flush()
+
+	err = conn.Flush()
 	CheckError(err, "SHandshake() Flush S0+S1")
 
 	// Read C0
-	if timeout > 0 {
-		c.SetReadDeadline(time.Now().Add(timeout))
-	}
-	c0, err := br.ReadByte()
+	c0, err := conn.ReadByte()
 	CheckError(err, "SHandshake() Read C0")
 	if c0 != 0x03 {
 		return errors.New(fmt.Sprintf("SHandshake() Got C0: %x", c0))
@@ -323,10 +318,7 @@ func SHandshake(c net.Conn, br *bufio.Reader, bw *bufio.Writer, timeout time.Dur
 
 	// Read C1
 	c1 := make([]byte, RTMP_SIG_SIZE)
-	if timeout > 0 {
-		c.SetReadDeadline(time.Now().Add(timeout))
-	}
-	_, err = io.ReadAtLeast(br, c1, RTMP_SIG_SIZE)
+	_, err = io.ReadFull(conn, c1)
 	CheckError(err, "SHandshake Read C1")
 	// logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
 	// 	"SHandshake() Flash player version is %d.%d.%d.%d", c1[4], c1[5], c1[6], c1[7])
@@ -355,21 +347,15 @@ func SHandshake(c net.Conn, br *bufio.Reader, bw *bufio.Writer, timeout time.Dur
 	}
 
 	// Send S2
-	_, err = bw.Write(s2)
+	_, err = conn.Write(s2)
 	CheckError(err, "SHandshake() Send S2")
 
-	if timeout > 0 {
-		//		c.SetWriteDeadline(time.Now().Add(timeout))
-	}
-	err = bw.Flush()
+	err = conn.Flush()
 	CheckError(err, "SHandshake() Flush S2")
 
 	// Read C2
-	if timeout > 0 {
-		//		c.SetReadDeadline(time.Now().Add(timeout))
-	}
 	c2 := make([]byte, RTMP_SIG_SIZE)
-	_, err = io.ReadAtLeast(br, c2, RTMP_SIG_SIZE)
+	_, err = io.ReadFull(conn, c2)
 	CheckError(err, "SHandshake() Read C2")
 	// TODO: check C2
 	return

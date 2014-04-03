@@ -18,6 +18,7 @@ var (
 	ErrInvalidChunkStreamID = errors.New("chunk error: stream id")
 	ErrInvalidChunk         = errors.New("chunk error: invalid chunk")
 	ErrMaxChunkStreams      = errors.New("chunk error: maximum chunk streams reached")
+	ErrClosedChunkStream    = errors.New("chunk error: all chunk streams closed")
 )
 
 type ChunkStreamWriter interface {
@@ -41,6 +42,9 @@ type chunkStreamWriter struct {
 	lowPriority    chan messageWriter
 
 	mu sync.RWMutex
+
+	done chan bool
+	once sync.Once
 }
 
 type outChunkStream struct {
@@ -67,6 +71,7 @@ func NewChunkStreamWriter() ChunkStreamWriter {
 		highPriority:   high,
 		mediumPriority: medium,
 		lowPriority:    low,
+		done:           make(chan bool),
 	}
 
 	return csw
@@ -105,30 +110,22 @@ func (csw *chunkStreamWriter) CreateChunkStream(p int) (uint32, error) {
 }
 
 func (csw *chunkStreamWriter) Close() {
-	close(csw.highPriority)
-	close(csw.mediumPriority)
-	close(csw.lowPriority)
+	csw.once.Do(func() {
+		close(csw.done)
+	})
 }
 
 func (csw *chunkStreamWriter) WriteTo(w Writer) (int64, error) {
 	var outBytes int64
 	var writer messageWriter
-	var ok bool
 
 	for {
 		select {
-		case writer, ok = <-csw.highPriority:
-			if !ok {
-				return outBytes, nil
-			}
-		case writer, ok = <-csw.mediumPriority:
-			if !ok {
-				return outBytes, nil
-			}
-		case writer, ok = <-csw.lowPriority:
-			if !ok {
-				return outBytes, nil
-			}
+		case writer = <-csw.highPriority:
+		case writer = <-csw.mediumPriority:
+		case writer = <-csw.lowPriority:
+		case <-csw.done:
+			return outBytes, nil
 		}
 
 		n, err := writer(w)
@@ -159,11 +156,13 @@ func (csw *chunkStreamWriter) Send(msg *Message) error {
 	}
 
 	select {
-	case cs.messageQueue <- writer:
+	case cs.messageQueue <- messageWriter(writer):
 		select {
 		case err := <-done:
 			return err
 		}
+	case <-csw.done:
+		return ErrClosedChunkStream
 	}
 
 }

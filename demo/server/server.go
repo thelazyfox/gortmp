@@ -1,22 +1,58 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
 	"github.com/thelazyfox/gortmp"
 	"github.com/thelazyfox/gortmp/log"
+	"github.com/zhangpeihao/goflv"
 	"net"
-	"time"
 )
 
 var (
 	listenAddr = flag.String("listen", ":1935", "The address to bind to")
 )
 
+func RecordStream(ms rtmp.MediaStream, filename string) {
+	fmt.Printf("RecordStream staring...\n")
+	ch := ms.Subscribe()
+
+	if ch == nil {
+		fmt.Printf("RecordStream nil channel\n")
+		return
+	}
+
+	out, err := flv.CreateFile(filename)
+	if err != nil {
+		fmt.Printf("RecordStream failed to create file\n")
+		return
+	}
+
+	defer out.Close()
+	defer out.Sync()
+
+	for {
+		select {
+		case tag, ok := <-ch:
+			if !ok {
+				fmt.Printf("RecordStream tag channel closed\n")
+				return
+			}
+
+			switch tag.Type {
+			case rtmp.VIDEO_TYPE:
+				fallthrough
+			case rtmp.AUDIO_TYPE:
+				fmt.Printf("RecordStream writing tag\n")
+				out.WriteTag(tag.Bytes, tag.Type, tag.Timestamp)
+			}
+		}
+	}
+}
+
 func main() {
 	flag.Parse()
-	log.SetLogLevel(log.TRACE)
+	log.SetLogLevel(log.DEBUG)
 
 	ln, err := net.Listen("tcp", *listenAddr)
 	if err != nil {
@@ -26,30 +62,20 @@ func main() {
 
 	fmt.Printf("Listening on: %s\n", ln.Addr().String())
 
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			netErr, ok := err.(net.Error)
-			if !ok || !netErr.Temporary() {
-				fmt.Printf("Socket accept error: %s\n", err)
-				return
-			}
-		}
+	h := &handler{}
+	server := rtmp.NewServer(h)
+	h.server = server
+	err = server.Serve(ln)
 
-		br := bufio.NewReader(conn)
-		bw := bufio.NewWriter(conn)
-		rw := bufio.NewReadWriter(br, bw)
-		err = rtmp.SHandshake(conn, br, bw, 500*time.Millisecond)
-		conn.SetDeadline(time.Time{})
-		if err != nil {
-			fmt.Printf("Handshake error: %s\n", err)
-		} else {
-			rtmp.NewConn(conn, rw, &handler{})
-		}
+	if err != nil {
+		fmt.Printf("Server error: %s\n", err)
+	} else {
+		fmt.Printf("Server exited cleanly: %s\n", err)
 	}
 }
 
 type handler struct {
+	server rtmp.Server
 }
 
 func (h *handler) OnAccept(rtmp.Conn) {
@@ -68,7 +94,8 @@ func (h *handler) OnPlay(rtmp.Stream) {
 	fmt.Printf("OnPlay\n")
 }
 
-func (h *handler) OnPublish(rtmp.Stream) {
+func (h *handler) OnPublish(stream rtmp.Stream) {
+	go RecordStream(h.server.GetMediaStream(stream.Name()), "out.flv")
 	fmt.Printf("OnPublish\n")
 }
 
@@ -76,11 +103,7 @@ func (h *handler) OnClose(rtmp.Conn) {
 	fmt.Printf("OnClose\n")
 }
 
-func (h *handler) OnReceive(rtmp.Conn, rtmp.Stream, *rtmp.Message) {
-	fmt.Printf("OnReceive\n")
-}
-
 func (h *handler) Invoke(conn rtmp.Conn, stream rtmp.Stream, cmd *rtmp.Command, invoke func(*rtmp.Command) error) error {
-	fmt.Printf("Invoke\n")
+	fmt.Printf("Invoke %#v\n", *cmd)
 	return invoke(cmd)
 }

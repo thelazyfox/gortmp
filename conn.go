@@ -1,14 +1,11 @@
 package rtmp
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/binary"
 	"fmt"
 	"github.com/thelazyfox/gortmp/log"
 	"github.com/zhangpeihao/goamf"
-	"net"
-	"sync"
 )
 
 // Stream
@@ -16,6 +13,8 @@ import (
 type Conn interface {
 	Send(msg *Message) error
 	SendCommand(cmd *Command) error
+
+	Flush() error
 
 	SendStreamBegin(uint32)
 
@@ -30,41 +29,33 @@ type Conn interface {
 }
 
 type ConnHandler interface {
-	OnAccept(Conn)
-
 	OnConnect(Conn)
 	OnCreateStream(Stream)
-	OnPlay(Stream)
-	OnPublish(Stream)
 
 	OnClose(Conn)
 
-	OnReceive(Conn, Stream, *Message)
-	Invoke(Conn, Stream, *Command, func(*Command) error) error
+	OnReceive(Conn, *Message)
+	Invoke(Conn, *Command, func(*Command) error) error
 }
 
 type conn struct {
-	netConn     net.Conn
+	netConn     NetConn
 	chunkStream ChunkStream
 	handler     ConnHandler
 
-	rw *bufio.ReadWriter
-
 	app string
 
-	streams      map[uint32]*stream
-	streamsMutex sync.RWMutex
+	streams map[uint32]Stream
 
 	readDone  chan bool
 	writeDone chan bool
 }
 
-func NewConn(netConn net.Conn, rw *bufio.ReadWriter, handler ConnHandler) Conn {
+func NewConn(netConn NetConn, handler ConnHandler) Conn {
 	c := &conn{
 		netConn:   netConn,
 		handler:   handler,
-		rw:        rw,
-		streams:   make(map[uint32]*stream),
+		streams:   make(map[uint32]Stream),
 		readDone:  make(chan bool),
 		writeDone: make(chan bool),
 	}
@@ -74,18 +65,6 @@ func NewConn(netConn net.Conn, rw *bufio.ReadWriter, handler ConnHandler) Conn {
 	go c.readFrom()
 	go c.writeTo()
 	go c.waitClose()
-
-	// go func() {
-	// 	for {
-	// 		select {
-	// 		case <-time.After(250 * time.Millisecond):
-	// 			log.Trace("flushing")
-	// 			// if err := rw.Flush(); err != nil {
-	// 				// return
-	// 			// }
-	// 		}
-	// 	}
-	// }()
 
 	return c
 }
@@ -115,7 +94,11 @@ func (c *conn) SendCommand(cmd *Command) error {
 		return err
 	}
 
-	return c.rw.Flush()
+	return c.netConn.Flush()
+}
+
+func (c *conn) Flush() error {
+	return c.netConn.Flush()
 }
 
 func (c *conn) App() string {
@@ -123,15 +106,17 @@ func (c *conn) App() string {
 }
 
 func (c *conn) Error(err error) {
-	//TODO implement better
-	log.Debug("Closing connection: %s", err)
+	cmdErr, ok := err.(ErrorResponse)
+	if ok {
+		err = c.SendCommand(cmdErr.Command())
+	}
+
+	log.Error("Closing connection with error: %s", err)
 	c.Close()
 }
 
 func (c *conn) Close() {
-	//TODO implement better
 	c.netConn.Close()
-	c.chunkStream.Close()
 }
 
 func (c *conn) SendStreamBegin(streamId uint32) {
@@ -172,7 +157,7 @@ func (c *conn) SetChunkSize(size uint32) {
 			return err
 		}
 
-		return c.rw.Flush()
+		return c.netConn.Flush()
 
 	}()
 
@@ -189,7 +174,7 @@ func (c *conn) SetWindowSize(size uint32) {
 			return err
 		}
 
-		return c.rw.Flush()
+		return c.netConn.Flush()
 	}()
 
 	if err != nil {
@@ -205,7 +190,7 @@ func (c *conn) SetPeerBandwidth(size uint32, limit uint8) {
 			return err
 		}
 
-		return c.rw.Flush()
+		return c.netConn.Flush()
 	}()
 
 	if err != nil {
@@ -236,14 +221,12 @@ func (c *conn) OnMessage(msg *Message) {
 
 func (c *conn) onReceive(msg *Message) {
 	if msg.StreamID == 0 {
-		c.handler.OnReceive(c, nil, msg)
+		c.handler.OnReceive(c, msg)
 	} else {
-		c.streamsMutex.RLock()
 		stream := c.streams[msg.StreamID]
-		c.streamsMutex.RUnlock()
 
 		if stream != nil {
-			c.handler.OnReceive(c, stream, msg)
+			stream.onReceive(msg)
 		} else {
 			c.Error(fmt.Errorf("invalid message stream id"))
 		}
@@ -251,32 +234,13 @@ func (c *conn) onReceive(msg *Message) {
 }
 
 func (c *conn) Invoke(cmd *Command) error {
-	if cmd.StreamID == 0 {
-		switch cmd.Name {
-		case "connect":
-			return c.invokeConnect(cmd)
-		case "createStream":
-			return c.invokeCreateStream(cmd)
-		case "releaseStream":
-			log.Debug("releaseStream not supported")
-		case "FCPublish":
-			return c.invokeFCPublish(cmd)
-		}
-	} else {
-		c.streamsMutex.RLock()
-		stream := c.streams[cmd.StreamID]
-		c.streamsMutex.RUnlock()
-
-		if stream == nil {
-			return fmt.Errorf("invalid message stream id")
-		}
-
-		switch cmd.Name {
-		case "publish":
-			return c.invokePublish(stream, cmd)
-		case "play":
-			return c.invokePlay(stream, cmd)
-		}
+	switch cmd.Name {
+	case "connect":
+		return c.invokeConnect(cmd)
+	case "createStream":
+		return c.invokeCreateStream(cmd)
+	case "FCPublish":
+		return c.invokeFCPublish(cmd)
 	}
 
 	return nil
@@ -365,14 +329,13 @@ func (c *conn) invokeCreateStream(cmd *Command) error {
 		return err
 	}
 
-	stream := c.allocateStream()
-	stream.csid = csid
+	stream := c.allocateStream(csid)
 
 	err = c.SendCommand(&Command{
 		Name:          "_result",
 		StreamID:      cmd.StreamID,
 		TransactionID: cmd.TransactionID,
-		Objects:       []interface{}{nil, stream.id},
+		Objects:       []interface{}{nil, stream.ID()},
 	})
 
 	if err != nil {
@@ -380,7 +343,7 @@ func (c *conn) invokeCreateStream(cmd *Command) error {
 		return err
 	}
 
-	c.SendStreamBegin(stream.id)
+	c.SendStreamBegin(stream.ID())
 	c.handler.OnCreateStream(stream)
 	return nil
 }
@@ -430,77 +393,10 @@ func (c *conn) invokeFCPublish(cmd *Command) error {
 	})
 }
 
-func (c *conn) invokePublish(stream Stream, cmd *Command) error {
-	log.Trace("invokePublish")
-	streamName, ok := func() (string, bool) {
-		if cmd.Objects == nil || len(cmd.Objects) != 3 {
-			return "", false
-		}
-
-		name, ok := cmd.Objects[1].(string)
-		if !ok || len(name) == 0 {
-			return "", false
-		}
-
-		return name, true
-	}()
-
-	log.Trace("got streamName")
-
-	if !ok {
-		return NewErrorResponse(&Command{
-			Name:          "onStatus",
-			StreamID:      cmd.StreamID,
-			TransactionID: cmd.TransactionID,
-			Objects: []interface{}{
-				nil,
-				amf.Object{
-					"level":       "error",
-					"code":        NETSTREAM_PUBLISH_BADNAME,
-					"description": fmt.Sprintf("invalid stream name"),
-				},
-			},
-		})
-	}
-
-	log.Trace("sending onStatus publish start success")
-	err := c.SendCommand(&Command{
-		Name:          "onStatus",
-		StreamID:      0,
-		TransactionID: cmd.TransactionID,
-		Objects: []interface{}{
-			nil,
-			amf.Object{
-				"level":       "status",
-				"code":        "NetStream.Publish.Start",
-				"description": fmt.Sprintf("Publishing %s.", streamName),
-			},
-		},
-	})
-
-	if err != nil {
-		log.Debug("invokePublish error: %s", err)
-		return err
-	}
-
-	c.handler.OnPublish(stream)
-	return nil
-}
-
-func (c *conn) invokePlay(stream Stream, cmd *Command) error {
-	return nil
-}
-
-func (c *conn) allocateStream() *stream {
-	c.streamsMutex.Lock()
-	defer c.streamsMutex.Unlock()
-
+func (c *conn) allocateStream(csid uint32) Stream {
 	for i := uint32(1); ; i += 1 {
 		if s := c.streams[i]; s == nil {
-			c.streams[i] = &stream{
-				id:   i,
-				conn: c,
-			}
+			c.streams[i] = NewStream(i, c, csid)
 			return c.streams[i]
 		}
 	}
@@ -510,16 +406,13 @@ func (c *conn) invoke(cmd *Command) {
 	var err error
 
 	if cmd.StreamID == 0 {
-		err = c.handler.Invoke(c, nil, cmd, c.Invoke)
+		err = c.handler.Invoke(c, cmd, c.Invoke)
 	} else {
-		c.streamsMutex.RLock()
 		stream := c.streams[cmd.StreamID]
-		c.streamsMutex.RUnlock()
-
 		if stream != nil {
-			c.handler.Invoke(c, stream, cmd, c.Invoke)
+			err = stream.invoke(cmd)
 		} else {
-			err = fmt.Errorf("invalid message stream id")
+			err = fmt.Errorf("invalid stream id specified")
 		}
 	}
 
@@ -574,20 +467,31 @@ func (c *conn) parseAmf0(msg *Message, cmd *Command) (*Command, error) {
 }
 
 func (c *conn) waitClose() {
-	<-c.readDone
-	<-c.writeDone
+	select {
+	case <-c.readDone:
+	case <-c.writeDone:
+	}
+
+	// shut down when read or write ends
+	c.netConn.Close()
+	c.chunkStream.Close()
+
+	select {
+	case <-c.readDone:
+	case <-c.writeDone:
+	}
 
 	c.handler.OnClose(c)
 }
 
 func (c *conn) readFrom() {
-	n, err := c.chunkStream.ReadFrom(c.rw)
+	n, err := c.chunkStream.ReadFrom(c.netConn)
 	log.Debug("readLoop() ended after %d bytes with err %s", n, err)
 	c.readDone <- true
 }
 
 func (c *conn) writeTo() {
-	n, err := c.chunkStream.WriteTo(c.rw)
+	n, err := c.chunkStream.WriteTo(c.netConn)
 	log.Debug("writeLoop() ended after %d bytes with err %s", n, err)
 	c.writeDone <- true
 }
