@@ -230,6 +230,7 @@ func (ss *serverStreamHandler) OnPlay(stream Stream) {
 				stream.Conn().Close()
 			}()
 		} else {
+			stream.Conn().Error(fmt.Errorf("stream not found"))
 			log.Debug("failed to find media stream")
 		}
 	} else {
