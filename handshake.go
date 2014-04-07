@@ -3,24 +3,25 @@
 package rtmp
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
-	"errors"
 	"fmt"
+	"github.com/thelazyfox/gortmp/log"
 	"io"
-	"math/rand"
-	"net"
-	"time"
+	"io/ioutil"
 )
 
 const (
+	HANDSHAKE_SIZE = 1536
+	DIGEST_LENGTH  = 32
+	KEY_LENGTH     = 128
+
 	RTMP_SIG_SIZE          = 1536
 	RTMP_LARGE_HEADER_SIZE = 12
 	SHA256_DIGEST_LENGTH   = 32
-	RTMP_DEFAULT_CHUNKSIZE = 128
 )
 
 var (
@@ -47,13 +48,7 @@ var (
 	}
 )
 
-func CheckError(err error, tag string) {
-	if err != nil {
-		panic(fmt.Errorf("%s: %s", tag, err))
-	}
-}
-
-func HMACsha256(msgBytes []byte, key []byte) ([]byte, error) {
+func calculateHMACsha256(msgBytes []byte, key []byte) ([]byte, error) {
 	h := hmac.New(sha256.New, key)
 	_, err := h.Write(msgBytes)
 	if err != nil {
@@ -62,301 +57,182 @@ func HMACsha256(msgBytes []byte, key []byte) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
-func CreateRandomBlock(size uint) []byte {
-	/*
-		buf := make([]byte, size)
-		for i := uint(0); i < size; i++ {
-			buf[i] = byte(rand.Int() % 256)
-		}
-		return buf
-	*/
-
-	size64 := size / uint(8)
-	buf := new(bytes.Buffer)
-	var r64 int64
-	var i uint
-	for i = uint(0); i < size64; i++ {
-		r64 = rand.Int63()
-		binary.Write(buf, binary.BigEndian, &r64)
-	}
-	for i = i * uint(8); i < size; i++ {
-		buf.WriteByte(byte(rand.Int()))
-	}
-	return buf.Bytes()
-
+func Handshake(conn NetConn) error {
+	return fmt.Errorf("not implemented")
 }
 
-func CalcDigestPos(buf []byte, offset uint32, mod_val uint32, add_val uint32) (digest_pos uint32) {
-	var i uint32
-	for i = 0; i < 4; i++ {
-		digest_pos += uint32(buf[i+offset])
+func sumBytes(buf []byte) uint32 {
+	var sum uint32
+	for _, b := range buf {
+		sum += uint32(b)
 	}
-	digest_pos = digest_pos%mod_val + add_val
-	return
+
+	return sum
 }
 
-func CalcDHPos(buf []byte, offset uint32, mod_val uint32, add_val uint32) (digest_pos uint32) {
-	var i uint32
-	for i = 0; i < 4; i++ {
-		digest_pos += uint32(buf[i+offset])
-	}
-	digest_pos = digest_pos%mod_val + add_val
-	return
+func getDigestOffset0(buf []byte) uint32 {
+	return (sumBytes(buf[8:12]) % 728) + 12
 }
 
-func ValidateDigest(buf []byte, offset uint32, key []byte) uint32 {
-	digestPos := CalcDigestPos(buf, offset, 728, offset+4)
-	// Create temp buffer
-	tmpBuf := new(bytes.Buffer)
-	tmpBuf.Write(buf[:digestPos])
-	tmpBuf.Write(buf[digestPos+SHA256_DIGEST_LENGTH:])
-	// Generate the hash
-	tempHash, err := HMACsha256(tmpBuf.Bytes(), key)
+func getDigestOffset1(buf []byte) uint32 {
+	return (sumBytes(buf[772:776]) % 728) + 776
+}
+
+func getDigestOffset(buf []byte, scheme int) uint32 {
+	switch scheme {
+	case 0:
+		return getDigestOffset0(buf)
+	case 1:
+		return getDigestOffset1(buf)
+	default:
+		return getDigestOffset0(buf)
+	}
+}
+
+func validate(buf []byte) (int, bool) {
+	if validateScheme(buf, 0) {
+		return 0, true
+	} else if validateScheme(buf, 1) {
+		return 1, true
+	} else {
+		// default to scheme 0
+		return 0, false
+	}
+}
+
+func validateScheme(buf []byte, scheme int) bool {
+	var digestOffset uint32
+	switch scheme {
+	case 0:
+		digestOffset = getDigestOffset0(buf)
+	case 1:
+		digestOffset = getDigestOffset1(buf)
+	default:
+		log.Error("Unknown validation scheme: %d", scheme)
+		return false
+	}
+
+	tempBuffer := make([]byte, HANDSHAKE_SIZE-DIGEST_LENGTH)
+	copy(tempBuffer, buf[:digestOffset])
+	copy(tempBuffer[digestOffset:], buf[digestOffset+DIGEST_LENGTH:])
+
+	hash, err := calculateHMACsha256(tempBuffer, GENUINE_FP_KEY[:30])
 	if err != nil {
-		return 0
+		log.Error("Failed to get hmac digest: %s", err)
+		return false
 	}
-	if bytes.Compare(tempHash, buf[digestPos:digestPos+SHA256_DIGEST_LENGTH]) == 0 {
-		return digestPos
-	}
-	return 0
+
+	return bytes.Compare(buf[digestOffset:digestOffset+DIGEST_LENGTH], hash) != 0
 }
 
-func ImprintWithDigest(buf []byte, key []byte) uint32 {
-	//digestPos := CalcDigestPos(buf, 772, 728, 776)
-	digestPos := CalcDigestPos(buf, 8, 728, 12)
-
-	// Create temp buffer
-	tmpBuf := new(bytes.Buffer)
-	tmpBuf.Write(buf[:digestPos])
-	tmpBuf.Write(buf[digestPos+SHA256_DIGEST_LENGTH:])
-	// Generate the hash
-	tempHash, err := HMACsha256(tmpBuf.Bytes(), key)
-	if err != nil {
-		return 0
-	}
-	for index, b := range tempHash {
-		buf[digestPos+uint32(index)] = b
-	}
-	return digestPos
+func doSimpleHandshake(conn NetConn, c1 []byte) error {
+	return fmt.Errorf("simple handshake not implemented")
 }
 
-func HandshakeSample(c net.Conn, br *bufio.Reader, bw *bufio.Writer, timeout time.Duration) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = r.(error)
-		}
-	}()
-	// Send C0+C1
-	err = bw.WriteByte(0x03)
-	c1 := CreateRandomBlock(RTMP_SIG_SIZE)
-	for i := 0; i < 8; i++ {
-		c1[i] = 0
-	}
-	bw.Write(c1)
-	err = bw.Flush()
-	CheckError(err, "Handshake() Flush C0+C1")
-	// Read S0+S1+S2
-	s0, err := br.ReadByte()
-	CheckError(err, "Handshake() Read S0")
-	if s0 != 0x03 {
-		return errors.New(fmt.Sprintf("Handshake() Got S0: %x", s0))
-	}
-	s1 := make([]byte, RTMP_SIG_SIZE)
-	_, err = io.ReadAtLeast(br, s1, RTMP_SIG_SIZE)
-	CheckError(err, "Handshake() Read S1")
-	bw.Write(s1)
-	err = bw.Flush()
-	CheckError(err, "Handshake() Flush C2")
-	_, err = io.ReadAtLeast(br, s1, RTMP_SIG_SIZE)
-	CheckError(err, "Handshake() Read S2")
-	return
-}
-
-func Handshake(c net.Conn, br *bufio.Reader, bw *bufio.Writer, timeout time.Duration) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = r.(error)
-		}
-	}()
-	// Send C0+C1
-	err = bw.WriteByte(0x03)
-	CheckError(err, "Handshake() Send C0")
-	c1 := CreateRandomBlock(RTMP_SIG_SIZE)
-	// Set Timestamp
-	// binary.BigEndian.PutUint32(c1, uint32(GetTimestamp()))
-	binary.BigEndian.PutUint32(c1, uint32(0))
-	// Set FlashPlayer version
-	for i := 0; i < 4; i++ {
-		c1[4+i] = FLASH_PLAYER_VERSION[i]
-	}
-
-	// TODO: Create the DH public/private key, and use it in encryption mode
-
-	clientDigestOffset := ImprintWithDigest(c1, GENUINE_FP_KEY[:30])
-	if clientDigestOffset == 0 {
-		return errors.New("ImprintWithDigest failed")
-	}
-
-	_, err = bw.Write(c1)
-	CheckError(err, "Handshake() Send C1")
-	if timeout > 0 {
-		c.SetWriteDeadline(time.Now().Add(timeout))
-	}
-	err = bw.Flush()
-	CheckError(err, "Handshake() Flush C0+C1")
-
-	// Read S0
-	if timeout > 0 {
-		c.SetReadDeadline(time.Now().Add(timeout))
-	}
-	s0, err := br.ReadByte()
-	CheckError(err, "Handshake() Read S0")
-	if s0 != 0x03 {
-		return errors.New(fmt.Sprintf("Handshake() Got S0: %x", s0))
-	}
-
-	// Read S1
-	s1 := make([]byte, RTMP_SIG_SIZE)
-	if timeout > 0 {
-		c.SetReadDeadline(time.Now().Add(timeout))
-	}
-	_, err = io.ReadAtLeast(br, s1, RTMP_SIG_SIZE)
-	CheckError(err, "Handshake Read S1")
-	// logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
-	// 	"Handshake() FMS version is %d.%d.%d.%d", s1[4], s1[5], s1[6], s1[7])
-	//	if s1[4] < 3 {
-	//		return errors.New(fmt.Sprintf("FMS version is %d.%d.%d.%d, unsupported!", s1[4], s1[5], s1[6], s1[7]))
-	//	}
-
-	// Read S2
-	if timeout > 0 {
-		c.SetReadDeadline(time.Now().Add(timeout))
-	}
-	s2 := make([]byte, RTMP_SIG_SIZE)
-	_, err = io.ReadAtLeast(br, s2, RTMP_SIG_SIZE)
-	CheckError(err, "Handshake() Read S2")
-
-	// Check server response
-	server_pos := ValidateDigest(s1, 8, GENUINE_FMS_KEY[:36])
-	if server_pos == 0 {
-		server_pos = ValidateDigest(s1, 772, GENUINE_FMS_KEY[:36])
-		if server_pos == 0 {
-			return errors.New("Server response validating failed")
-		}
-	}
-
-	digest, err := HMACsha256(c1[clientDigestOffset:clientDigestOffset+SHA256_DIGEST_LENGTH], GENUINE_FMS_KEY)
-	CheckError(err, "Get digest from c1 error")
-
-	signature, err := HMACsha256(s2[:RTMP_SIG_SIZE-SHA256_DIGEST_LENGTH], digest)
-	CheckError(err, "Get signature from s2 error")
-
-	if bytes.Compare(signature, s2[RTMP_SIG_SIZE-SHA256_DIGEST_LENGTH:]) != 0 {
-		return errors.New("Server signature mismatch")
-	}
-
-	// Generate C2
-	// server_pos := GetDigestOffset1(s1)
-	digestResp, err := HMACsha256(s1[server_pos:server_pos+SHA256_DIGEST_LENGTH], GENUINE_FP_KEY)
-	CheckError(err, "Generate C2 HMACsha256 digestResp")
-
-	c2 := CreateRandomBlock(RTMP_SIG_SIZE)
-	signatureResp, err := HMACsha256(c2[:RTMP_SIG_SIZE-SHA256_DIGEST_LENGTH], digestResp)
-	CheckError(err, "Generate C2 HMACsha256 signatureResp")
-	// DumpBuffer("signatureResp", signatureResp, 0)
-	for index, b := range signatureResp {
-		c2[RTMP_SIG_SIZE-SHA256_DIGEST_LENGTH+index] = b
-	}
-
-	// Send C2
-	_, err = bw.Write(c2)
-	CheckError(err, "Handshake() Send C2")
-	if timeout > 0 {
-		c.SetWriteDeadline(time.Now().Add(timeout))
-	}
-	err = bw.Flush()
-	CheckError(err, "Handshake() Flush C2")
-
-	return
-}
-
-func SHandshake(conn NetConn) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = r.(error)
-		}
-	}()
-	// Send S0+S1
-	err = conn.WriteByte(0x03)
-	CheckError(err, "SHandshake() Send S0")
-	s1 := CreateRandomBlock(RTMP_SIG_SIZE)
-	// Set Timestamp
-	// binary.BigEndian.PutUint32(s1, uint32(GetTimestamp()))
-	binary.BigEndian.PutUint32(s1, uint32(0))
-	// Set FlashPlayer version
-	for i := 0; i < 4; i++ {
-		s1[4+i] = FMS_VERSION[i]
-	}
-
-	serverDigestOffset := ImprintWithDigest(s1, GENUINE_FMS_KEY[:36])
-	if serverDigestOffset == 0 {
-		return errors.New("ImprintWithDigest failed")
-	}
-
-	_, err = conn.Write(s1)
-	CheckError(err, "SHandshake() Send S1")
-
-	err = conn.Flush()
-	CheckError(err, "SHandshake() Flush S0+S1")
-
-	// Read C0
+func SHandshake(conn NetConn) error {
 	c0, err := conn.ReadByte()
-	CheckError(err, "SHandshake() Read C0")
+	if err != nil {
+		return err
+	}
+
 	if c0 != 0x03 {
-		return errors.New(fmt.Sprintf("SHandshake() Got C0: %x", c0))
+		log.Warning("SHandshake unsupported handshake type: %x", c0)
 	}
 
-	// Read C1
-	c1 := make([]byte, RTMP_SIG_SIZE)
-	_, err = io.ReadFull(conn, c1)
-	CheckError(err, "SHandshake Read C1")
-	// logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
-	// 	"SHandshake() Flash player version is %d.%d.%d.%d", c1[4], c1[5], c1[6], c1[7])
+	c1 := make([]byte, HANDSHAKE_SIZE)
+	if _, err := io.ReadFull(conn, c1); err != nil {
+		return err
+	}
+	log.Debug("SHandshake read c1")
 
-	// scheme := 0
-	clientDigestOffset := ValidateDigest(c1, 8, GENUINE_FP_KEY[:30])
-	if clientDigestOffset == 0 {
-		clientDigestOffset = ValidateDigest(c1, 772, GENUINE_FP_KEY[:30])
-		if clientDigestOffset == 0 {
-			return errors.New("SHandshake C1 validating failed")
+	response := make([]byte, 2*HANDSHAKE_SIZE+1)
+	s0 := response[0:1]
+	s1 := response[1 : HANDSHAKE_SIZE+1]
+	s2 := response[HANDSHAKE_SIZE+1:]
+
+	// set handshake type
+	s0[0] = 0x03
+
+	// Check the first byte of version
+	v := c1[4:8]
+	if v[0] == 0 {
+		log.Warning("SHandshake unversioned flash client detected: %x %x %x %x", v[0], v[1], v[2], v[3])
+	}
+
+	scheme, ok := validate(c1)
+	if !ok {
+		log.Warning("SHandshake invalid flash client detected")
+	}
+	log.Debug("SHandshake validated scheme %d", scheme)
+
+	// prep output
+	binary.BigEndian.PutUint32(s1[4:8], 0x01020304)
+	if _, err := rand.Read(s1[8:]); err != nil {
+		return fmt.Errorf("SHandshake failed to create S1 bytes: %s", err)
+	}
+
+	s1off := getDigestOffset(s1, scheme)
+	s1bytes := make([]byte, HANDSHAKE_SIZE-DIGEST_LENGTH)
+	copy(s1bytes, s1[:s1off])
+	copy(s1bytes[s1off:], s1[s1off+DIGEST_LENGTH:])
+
+	s1hash, err := calculateHMACsha256(s1bytes, GENUINE_FMS_KEY[:36])
+	if err != nil {
+		return fmt.Errorf("SHandshake failed to create S1 hash: %s", err)
+	}
+
+	copy(s1[s1off:], s1hash)
+	c1off := getDigestOffset(c1, scheme)
+	c1hash := c1[c1off : c1off+DIGEST_LENGTH]
+
+	s2bytes := s2[:HANDSHAKE_SIZE-DIGEST_LENGTH]
+	if _, err := rand.Read(s2bytes); err != nil {
+		return fmt.Errorf("SHandshake failed to create S2 bytes: %s", err)
+	}
+
+	s2key, err := calculateHMACsha256(c1hash, GENUINE_FMS_KEY[:68])
+	if err != nil {
+		return fmt.Errorf("SHandshake failed to create S2 key: %s", err)
+	}
+
+	s2hash, err := calculateHMACsha256(s2bytes, s2key)
+	if err != nil {
+		return fmt.Errorf("SHandshake failed to create S2 hash: %s", err)
+	}
+	copy(s2[HANDSHAKE_SIZE-DIGEST_LENGTH:], s2hash)
+
+	done := make(chan error)
+
+	go func() {
+		if _, err := conn.Write(response); err != nil {
+			done <- err
+			return
 		}
-		// scheme = 1
+
+		if err := conn.Flush(); err != nil {
+			done <- err
+			return
+		}
+
+		done <- nil
+		log.Debug("SHandshake response written")
+	}()
+
+	go func() {
+		// ignore client response
+		_, err := io.CopyN(ioutil.Discard, conn, HANDSHAKE_SIZE)
+		done <- err
+	}()
+
+	if err := <-done; err != nil {
+		return fmt.Errorf("SHandshake connection error: %s", err)
 	}
-	// logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
-	// 	"SHandshake() scheme = %d", scheme)
-	digestResp, err := HMACsha256(c1[clientDigestOffset:clientDigestOffset+SHA256_DIGEST_LENGTH], GENUINE_FMS_KEY)
-	CheckError(err, "SHandshake Generate digestResp")
 
-	// Generate S2
-	s2 := CreateRandomBlock(RTMP_SIG_SIZE)
-	signatureResp, err := HMACsha256(s2[:RTMP_SIG_SIZE-SHA256_DIGEST_LENGTH], digestResp)
-	CheckError(err, "SHandshake Generate S2 HMACsha256 signatureResp")
-	// DumpBuffer("SHandshake signatureResp", signatureResp, 0)
-	for index, b := range signatureResp {
-		s2[RTMP_SIG_SIZE-SHA256_DIGEST_LENGTH+index] = b
+	if err := <-done; err != nil {
+		return fmt.Errorf("SHandshake connection error: %s", err)
 	}
 
-	// Send S2
-	_, err = conn.Write(s2)
-	CheckError(err, "SHandshake() Send S2")
+	log.Debug("SHandshake Complete")
 
-	err = conn.Flush()
-	CheckError(err, "SHandshake() Flush S2")
-
-	// Read C2
-	c2 := make([]byte, RTMP_SIG_SIZE)
-	_, err = io.ReadFull(conn, c2)
-	CheckError(err, "SHandshake() Read C2")
-	// TODO: check C2
-	return
+	return nil
 }

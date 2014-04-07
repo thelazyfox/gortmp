@@ -92,18 +92,14 @@ var (
 )
 
 const (
-	MAX_TIMESTAMP                       = uint32(2000000000)
-	AUTO_TIMESTAMP                      = uint32(0XFFFFFFFF)
-	DEFAULT_HIGH_PRIORITY_BUFFER_SIZE   = 2048
-	DEFAULT_MIDDLE_PRIORITY_BUFFER_SIZE = 128
-	DEFAULT_LOW_PRIORITY_BUFFER_SIZE    = 64
-	DEFAULT_CHUNK_SIZE                  = uint32(128)
-	DEFAULT_WINDOW_SIZE                 = 131072
-	DEFAULT_CAPABILITIES                = float64(15)
-	DEFAULT_AUDIO_CODECS                = float64(4071)
-	DEFAULT_VIDEO_CODECS                = float64(252)
-	FMS_CAPBILITIES                     = uint32(255)
-	FMS_MODE                            = uint32(2)
+	MAX_TIMESTAMP        = uint32(2000000000)
+	DEFAULT_CHUNK_SIZE   = uint32(128)
+	DEFAULT_WINDOW_SIZE  = 131072
+	DEFAULT_CAPABILITIES = float64(15)
+	DEFAULT_AUDIO_CODECS = float64(4071)
+	DEFAULT_VIDEO_CODECS = float64(252)
+	FMS_CAPBILITIES      = uint32(255)
+	FMS_MODE             = uint32(2)
 )
 
 type Writer interface {

@@ -59,7 +59,8 @@ func (s *server) handle(conn net.Conn) {
 
 	err := SHandshake(netConn)
 	if err != nil {
-		log.Error("Connection from %s failed handshake.", conn.RemoteAddr().String())
+		log.Error("Connection from %s failed handshake: %s", conn.RemoteAddr().String(), err)
+		netConn.Conn().Close()
 		return
 	}
 
