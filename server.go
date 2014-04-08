@@ -167,13 +167,12 @@ func (sc *serverConnHandler) OnCreateStream(stream Stream) {
 
 func (sc *serverConnHandler) OnClose(conn Conn) {
 	for stream, handler := range sc.streams {
-		sc.server.streams.Del(stream.Name())
-
 		if handler.mediaPlayer != nil {
 			handler.mediaPlayer.Close()
 		}
 
 		if handler.mediaStream != nil {
+			sc.server.streams.Del(stream.Name())
 			handler.mediaStream.Close()
 		}
 	}
