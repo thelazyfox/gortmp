@@ -288,37 +288,26 @@ func (c *conn) invokeConnect(cmd *Command) error {
 			TransactionID: cmd.TransactionID,
 			Objects: []interface{}{
 				nil,
-				amf.Object{
-					"level":       "error",
-					"code":        RESULT_CONNECT_REJECTED,
-					"description": RESULT_CONNECT_REJECTED_DESC,
-				},
+				StatusConnectRejected,
 			},
 		})
 	}
 
 	c.app = app
 
-	err := c.SendCommand(&Command{
-		Name:          "_result",
-		TransactionID: cmd.TransactionID,
-		Objects: []interface{}{
-			amf.Object{
-				"fmsVer":       "FMS/3,5,7,7009",
-				"capabilities": float64(31),
-			},
-			amf.Object{
-				"level":       "status",
-				"code":        RESULT_CONNECT_OK,
-				"description": RESULT_CONNECT_OK_DESC,
-			},
-		},
-	})
-
 	c.SetWindowSize(2500000)
 	c.SetPeerBandwidth(2500000, BANDWIDTH_LIMIT_DYNAMIC)
 	c.SendStreamBegin(0)
 	c.SetChunkSize(4096)
+
+	err := c.SendCommand(&Command{
+		Name:          "_result",
+		TransactionID: cmd.TransactionID,
+		Objects: []interface{}{
+			DefaultConnectProperties,
+			DefaultConnectInformation,
+		},
+	})
 
 	if err != nil {
 		log.Debug("invokeConnect error: %s", err)
@@ -378,26 +367,20 @@ func (c *conn) invokeFCPublish(cmd *Command) error {
 			TransactionID: 0,
 			Objects: []interface{}{
 				nil,
-				amf.Object{
-					"level":       "error",
-					"code":        NETSTREAM_PUBLISH_BADNAME,
-					"description": fmt.Sprintf("invalid stream name"),
-				},
+				StatusPublishBadName,
 			},
 		})
 	}
 
+	status := StatusPublishStart
+	status.Description = fmt.Sprintf("FCPublish to stream %s.", streamName)
 	return c.SendCommand(&Command{
 		Name:          "onFCPublish",
 		StreamID:      0,
-		TransactionID: cmd.TransactionID,
+		TransactionID: 0,
 		Objects: []interface{}{
 			nil,
-			amf.Object{
-				"level":       "status",
-				"code":        "NetStream.Publish.Start",
-				"description": fmt.Sprintf("FCPublish to stream %s.", streamName),
-			},
+			status,
 		},
 	})
 }

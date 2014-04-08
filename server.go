@@ -108,11 +108,7 @@ func (s *server) invokeConnect(conn Conn, cmd *Command, invoke func(*Command) er
 			TransactionID: cmd.TransactionID,
 			Objects: []interface{}{
 				nil,
-				amf.Object{
-					"level":       "error",
-					"code":        RESULT_CONNECT_REJECTED,
-					"description": RESULT_CONNECT_REJECTED_DESC,
-				},
+				StatusConnectRejected,
 			},
 		})
 	}
@@ -141,11 +137,7 @@ func (s *server) invokePublish(stream Stream, cmd *Command, invoke func(*Command
 			TransactionID: cmd.TransactionID,
 			Objects: []interface{}{
 				nil,
-				amf.Object{
-					"level":       "error",
-					"code":        NETSTREAM_PUBLISH_BADNAME,
-					"description": fmt.Sprintf("invalid stream name"),
-				},
+				StatusPublishBadName,
 			},
 		})
 	}

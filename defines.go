@@ -15,18 +15,6 @@ const (
 	HEADER_FMT_CONTINUATION           = 0x03
 )
 
-// Result codes
-const (
-	RESULT_CONNECT_OK            = "NetConnection.Connect.Success"
-	RESULT_CONNECT_REJECTED      = "NetConnection.Connect.Rejected"
-	RESULT_CONNECT_OK_DESC       = "Connection successed."
-	RESULT_CONNECT_REJECTED_DESC = "[ AccessManager.Reject ] : [ code=400 ] : "
-	NETSTREAM_PLAY_START         = "NetStream.Play.Start"
-	NETSTREAM_PLAY_RESET         = "NetStream.Play.Reset"
-	NETSTREAM_PUBLISH_START      = "NetStream.Publish.Start"
-	NETSTREAM_PUBLISH_BADNAME    = "NetStream.Publish.BadName"
-)
-
 // Chunk stream ID
 const (
 	CS_ID_BASE             = uint32(2)
@@ -117,10 +105,49 @@ type ReadWriter interface {
 	Writer
 }
 
-type RtmpURL struct {
-	protocol     string
-	host         string
-	port         uint16
-	app          string
-	instanceName string
+type Status struct {
+	Level       string `amf:"level"`
+	Code        string `amf:"code"`
+	Description string `amf:"description"`
 }
+
+type ConnectProperties struct {
+	FmsVer       string  `amf:"fmsVer"`
+	Capabilities float64 `amf:"capabilities"`
+	Mode         float64 `amf:"mode"`
+}
+
+type ConnectInformation struct {
+	Status
+	Data           ConnectData `amf:"data"`
+	ObjectEncoding float64     `amf:"objectEncoding"`
+}
+
+type ConnectData struct {
+	Version string `amf:"string"`
+}
+
+type NetStreamPlayInfo struct {
+	Status
+	Details string `amf:"details"`
+}
+
+var (
+	StatusConnectAccepted = Status{"status", "NetConnection.Connect.Success", "Connection succeeded."}
+	StatusConnectRejected = Status{"error", "NetConnection.Connect.Rejected", "Connection rejected."}
+	StatusPublishBadName  = Status{"error", "NetStream.Publish.BadName", "Invalid publish stream name."}
+	StatusPublishStart    = Status{"status", "NetStream.Publish.Start", "NetStream publish succeeded."}
+	StatusPlayReset       = Status{"status", "NetStream.Play.Reset", "Play reset."}
+	StatusPlayStart       = Status{"status", "NetStream.Play.Start", "Play start."}
+
+	DefaultConnectProperties = ConnectProperties{
+		FmsVer:       "FMS/3,5,7,7009",
+		Capabilities: 31,
+		Mode:         1,
+	}
+	DefaultConnectInformation = ConnectInformation{
+		Status:         StatusConnectAccepted,
+		Data:           ConnectData{"3,5,7,7009"},
+		ObjectEncoding: 0,
+	}
+)

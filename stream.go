@@ -3,7 +3,7 @@ package rtmp
 import (
 	"bytes"
 	"fmt"
-	"github.com/zhangpeihao/goamf"
+	"strings"
 )
 
 type Stream interface {
@@ -140,11 +140,7 @@ func (s *stream) invokePublish(cmd *Command) error {
 			TransactionID: cmd.TransactionID,
 			Objects: []interface{}{
 				nil,
-				amf.Object{
-					"level":       "error",
-					"code":        NETSTREAM_PUBLISH_BADNAME,
-					"description": fmt.Sprintf("invalid stream name"),
-				},
+				StatusPublishBadName,
 			},
 		})
 	}
@@ -152,17 +148,15 @@ func (s *stream) invokePublish(cmd *Command) error {
 	s.name = streamName
 	s.publishing = true
 
+	status := StatusPublishStart
+	status.Description = fmt.Sprintf("Publishing %s.", strings.Split(streamName, "?")[0])
 	err := s.conn.SendCommand(&Command{
 		Name:          "onStatus",
-		StreamID:      0,
+		StreamID:      cmd.StreamID,
 		TransactionID: cmd.TransactionID,
 		Objects: []interface{}{
 			nil,
-			amf.Object{
-				"level":       "status",
-				"code":        "NetStream.Publish.Start",
-				"description": fmt.Sprintf("Publishing %s.", streamName),
-			},
+			status,
 		},
 	})
 
@@ -196,11 +190,9 @@ func (s *stream) invokePlay(cmd *Command) error {
 		TransactionID: 0,
 		Objects: []interface{}{
 			nil,
-			amf.Object{
-				"level":       "status",
-				"code":        NETSTREAM_PLAY_RESET,
-				"description": fmt.Sprintf("resetting stream %s", streamName),
-				"details":     streamName,
+			NetStreamPlayInfo{
+				Status:  StatusPlayReset,
+				Details: streamName,
 			},
 		},
 	})
@@ -214,11 +206,9 @@ func (s *stream) invokePlay(cmd *Command) error {
 		TransactionID: 0,
 		Objects: []interface{}{
 			nil,
-			amf.Object{
-				"level":       "status",
-				"code":        NETSTREAM_PLAY_RESET,
-				"description": fmt.Sprintf("playing stream %s", streamName),
-				"details":     streamName,
+			NetStreamPlayInfo{
+				Status:  StatusPlayStart,
+				Details: streamName,
 			},
 		},
 	})
