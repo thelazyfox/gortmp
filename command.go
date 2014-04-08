@@ -3,7 +3,7 @@
 package rtmp
 
 import (
-	"github.com/zhangpeihao/goamf"
+	"github.com/thelazyfox/goamf"
 )
 
 // Command

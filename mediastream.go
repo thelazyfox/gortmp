@@ -3,8 +3,8 @@ package rtmp
 import (
 	"bytes"
 	"encoding/binary"
+	"github.com/thelazyfox/goamf"
 	"github.com/thelazyfox/gortmp/log"
-	"github.com/zhangpeihao/goamf"
 	"sync"
 )
 

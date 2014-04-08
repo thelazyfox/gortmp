@@ -2,8 +2,8 @@ package rtmp
 
 import (
 	"fmt"
+	"github.com/thelazyfox/goamf"
 	"github.com/thelazyfox/gortmp/log"
-	"github.com/zhangpeihao/goamf"
 	"net"
 )
 
