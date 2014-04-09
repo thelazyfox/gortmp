@@ -14,17 +14,19 @@ var (
 )
 
 func RecordStream(ms rtmp.MediaStream, filename string) {
-	fmt.Printf("RecordStream staring...\n")
-	ch := ms.Subscribe()
+	log.Info("RecordStream staring...")
+	mb, err := rtmp.NewMediaBuffer(ms, 4*1024*1024)
 
-	if ch == nil {
-		fmt.Printf("RecordStream nil channel\n")
+	if err != nil {
+		log.Error("RecordStream failed to create MediaBuffer: %s", err)
 		return
 	}
 
+	defer mb.Close()
+
 	out, err := flv.CreateFile(filename)
 	if err != nil {
-		fmt.Printf("RecordStream failed to create file\n")
+		log.Error("RecordStream failed to create file")
 		return
 	}
 
@@ -32,19 +34,20 @@ func RecordStream(ms rtmp.MediaStream, filename string) {
 	defer out.Sync()
 
 	for {
-		select {
-		case tag, ok := <-ch:
-			if !ok {
-				fmt.Printf("RecordStream tag channel closed\n")
-				return
-			}
+		tag, err := mb.Get()
+		if err != nil {
+			log.Error("RecordStream failed to get tag: %s", err)
+			return
+		}
 
-			switch tag.Type {
-			case rtmp.VIDEO_TYPE:
-				fallthrough
-			case rtmp.AUDIO_TYPE:
-				fmt.Printf("RecordStream writing tag\n")
-				out.WriteTag(tag.Bytes, tag.Type, tag.Timestamp)
+		switch tag.Type {
+		case rtmp.VIDEO_TYPE:
+			fallthrough
+		case rtmp.AUDIO_TYPE:
+			err = out.WriteTag(tag.Bytes, tag.Type, tag.Timestamp)
+			if err != nil {
+				log.Error("RecordStream failed to write tag: %s", err)
+				return
 			}
 		}
 	}
@@ -95,7 +98,7 @@ func (h *handler) OnPlay(rtmp.Stream) {
 }
 
 func (h *handler) OnPublish(stream rtmp.Stream) {
-	go RecordStream(h.server.GetMediaStream(stream.Name()), "out.flv")
+	// go RecordStream(h.server.GetMediaStream(stream.Name()), "out.flv")
 	fmt.Printf("OnPublish\n")
 }
 

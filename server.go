@@ -190,24 +190,28 @@ func (ss *serverStreamHandler) OnPublish(stream Stream) {
 
 func (ss *serverStreamHandler) OnPlay(stream Stream) {
 	log.Debug("Server.OnPlay")
-	if ss.mediaPlayer == nil {
-		ms := ss.server.streams.Get(stream.Name())
+	ms := ss.server.streams.Get(stream.Name())
 
-		if ms != nil {
-			log.Debug("creating new media player")
-			ss.mediaPlayer = NewMediaPlayer(ms, stream)
+	if ss.mediaPlayer == nil && ms != nil {
+		log.Debug("creating new media player")
+		mp, err := NewMediaPlayer(ms, stream)
 
+		if err != nil {
+			log.Error("Failed to create MediaPlayer: %s", err)
+			stream.Conn().Error(err)
+			return
+		} else {
+			ss.mediaPlayer = mp
 			go func() {
 				ss.mediaPlayer.Wait()
 				stream.Conn().Close()
 			}()
-		} else {
-			stream.Conn().Error(fmt.Errorf("stream not found"))
-			log.Debug("failed to find media stream")
 		}
 	} else {
-		log.Debug("%+v", ss.mediaPlayer)
+		stream.Conn().Error(fmt.Errorf("play failed"))
+		return
 	}
+
 	ss.server.handler.OnPlay(stream)
 }
 
@@ -232,10 +236,6 @@ func (ss *serverStreamHandler) OnReceive(stream Stream, msg *Message) {
 				Timestamp: msg.AbsoluteTimestamp,
 				Size:      msg.Size,
 				Bytes:     msg.Buf.Bytes(),
-			}
-
-			if msg.Type == DATA_AMF0 {
-				logTag(tag)
 			}
 
 			ss.mediaStream.Publish(tag)
