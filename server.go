@@ -79,38 +79,26 @@ func (s *server) invoke(conn Conn, stream Stream, cmd *Command, invoke func(*Com
 }
 
 func (s *server) invokeConnect(conn Conn, cmd *Command, invoke func(*Command) error) error {
-	appName, ok := func() (string, bool) {
+	err := func() error {
 		if cmd.Objects == nil || len(cmd.Objects) == 0 {
-			return "", false
+			return fmt.Errorf("connect error: invalid args %v", cmd.Objects)
 		}
 
 		obj, ok := cmd.Objects[0].(amf.Object)
 		if !ok {
-			return "", false
-		}
-
-		if _, found := obj["app"]; !found {
-			return "", false
+			return fmt.Errorf("connect error: invalid args %v", cmd.Objects)
 		}
 
 		app, ok := obj["app"].(string)
-		if !ok {
-			return "", false
+		if !ok || app != "app" {
+			return fmt.Errorf("connect error: invalid app %v", cmd.Objects)
 		}
 
-		return app, true
+		return nil
 	}()
 
-	if appName != "app" || !ok {
-		return NewErrorResponse(&Command{
-			Name:          "_error",
-			StreamID:      cmd.StreamID,
-			TransactionID: cmd.TransactionID,
-			Objects: []interface{}{
-				nil,
-				StatusConnectRejected,
-			},
-		})
+	if err != nil {
+		return ErrConnectRejected(err)
 	}
 
 	return invoke(cmd)
@@ -131,15 +119,7 @@ func (s *server) invokePublish(stream Stream, cmd *Command, invoke func(*Command
 	}()
 
 	if mediaStream != nil {
-		return NewErrorResponse(&Command{
-			Name:          "onStatus",
-			StreamID:      cmd.StreamID,
-			TransactionID: cmd.TransactionID,
-			Objects: []interface{}{
-				nil,
-				StatusPublishBadName,
-			},
-		})
+		return ErrPublishBadName(fmt.Errorf("rejected"))
 	}
 
 	return invoke(cmd)

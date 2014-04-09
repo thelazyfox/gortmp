@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/thelazyfox/goamf"
 	"github.com/thelazyfox/gortmp/log"
+	"io"
 	"net"
 )
 
@@ -115,11 +116,29 @@ func (c *conn) App() string {
 }
 
 func (c *conn) Error(err error) {
-	cmdErr, ok := err.(ErrorResponse)
-	if ok {
-		err = c.SendCommand(cmdErr.Command())
+	var cmd *Command
+
+	if errStatus, ok := err.(ErrorStatus); ok {
+		cmd = &Command{
+			Name: "onStatus",
+			Objects: []interface{}{
+				nil,
+				errStatus.Status(),
+			},
+		}
+	} else if errCmd, ok := err.(ErrorCommand); ok {
+		cmd = errCmd.Command()
+	} else {
+		cmd = &Command{
+			Name: "onStatus",
+			Objects: []interface{}{
+				nil,
+				StatusConnectClosed(err.Error()),
+			},
+		}
 	}
 
+	c.SendCommand(cmd)
 	log.Error("Closing connection with error: %s", err)
 	c.Close()
 }
@@ -187,8 +206,7 @@ func (c *conn) SetWindowSize(size uint32) {
 	}()
 
 	if err != nil {
-		log.Error("SetWindowSize failed with error: %s", err)
-		c.Error(err)
+		c.Error(fmt.Errorf("SetWindowSize failed: %s", err))
 	}
 }
 
@@ -203,8 +221,7 @@ func (c *conn) SetPeerBandwidth(size uint32, limit uint8) {
 	}()
 
 	if err != nil {
-		log.Error("SetPeerBandwidth failed with error: %s", err)
-		c.Error(err)
+		c.Error(fmt.Errorf("SetPeerBandwidthFailed: %s", err))
 	}
 }
 
@@ -214,20 +231,29 @@ func (c *conn) OnMessage(msg *Message) {
 	case COMMAND_AMF3:
 		cmd, err := c.parseAmf3(msg)
 		if err != nil {
-			c.Error(fmt.Errorf("invalid COMMAND_AMF3 message"))
-			return
+			log.Warning("Invalid COMMAND_AMF3 message")
 		}
 		c.invoke(cmd)
 	case COMMAND_AMF0:
 		cmd, err := c.parseAmf0(msg, nil)
 		if err != nil {
-			c.Error(fmt.Errorf("invalid COMMAND_AMF0 message"))
+			log.Warning("Invalid COMMAND_AMF0 message")
 			return
 		}
 		c.invoke(cmd)
 	default:
 		c.onReceive(msg)
 	}
+}
+
+func (c *conn) OnWindowFull(count uint32) {
+	// pop this in a goroutine to avoid blocking the send loop
+	go func() {
+		err := c.chunkStream.SendAcknowledgement(count)
+		if err != nil {
+			c.Error(fmt.Errorf("OnWindowFull error: %s", err))
+		}
+	}()
 }
 
 func (c *conn) onReceive(msg *Message) {
@@ -258,41 +284,25 @@ func (c *conn) Invoke(cmd *Command) error {
 }
 
 func (c *conn) invokeConnect(cmd *Command) error {
-	app, ok := func() (string, bool) {
-		if cmd.Objects == nil || len(cmd.Objects) != 1 {
-			log.Debug("invokeConnect: invalid parameters: %+v", cmd.Objects)
-			return "", false
+	app, err := func() (string, error) {
+		if cmd.Objects == nil || len(cmd.Objects) < 1 {
+			return "", fmt.Errorf("connect failed: invalid args %v", cmd.Objects)
 		}
 
 		params, ok := cmd.Objects[0].(amf.Object)
 		if !ok {
-			log.Debug("invokeConnect: invalid command object: %+v", cmd.Objects[0])
-			return "", false
+			return "", fmt.Errorf("connect failed: invalid args %v", cmd.Objects)
 		}
 
-		app, ok := params["app"]
+		app, ok := params["app"].(string)
 		if !ok {
-			log.Debug("invokeConnect: missing app parameter")
-			return "", false
+			return "", fmt.Errorf("connect failed: invalid app %v", params["app"])
 		}
-
-		s, ok := app.(string)
-		if !ok {
-			log.Debug("invokeConnect: invalid app parameter: %+v", app)
-		}
-		return s, ok
+		return app, nil
 	}()
 
-	if !ok {
-		return NewErrorResponse(&Command{
-			Name:          "_error",
-			StreamID:      cmd.StreamID,
-			TransactionID: cmd.TransactionID,
-			Objects: []interface{}{
-				nil,
-				StatusConnectRejected,
-			},
-		})
+	if err != nil {
+		return ErrConnectRejected(err)
 	}
 
 	c.app = app
@@ -302,7 +312,7 @@ func (c *conn) invokeConnect(cmd *Command) error {
 	c.SendStreamBegin(0)
 	c.SetChunkSize(4096)
 
-	err := c.SendCommand(&Command{
+	err = c.SendCommand(&Command{
 		Name:          "_result",
 		TransactionID: cmd.TransactionID,
 		Objects: []interface{}{
@@ -312,7 +322,6 @@ func (c *conn) invokeConnect(cmd *Command) error {
 	})
 
 	if err != nil {
-		log.Debug("invokeConnect error: %s", err)
 		return err
 	}
 
@@ -349,40 +358,30 @@ func (c *conn) invokeCreateStream(cmd *Command) error {
 }
 
 func (c *conn) invokeFCPublish(cmd *Command) error {
-	streamName, ok := func() (string, bool) {
+	streamName, err := func() (string, error) {
 		if cmd.Objects == nil || len(cmd.Objects) != 2 {
-			return "", false
+			return "", fmt.Errorf("publish failed: invalid args %v", cmd.Objects)
 		}
 
 		name, ok := cmd.Objects[1].(string)
 		if !ok || len(name) == 0 {
-			return "", false
+			return "", fmt.Errorf("publish failed: invalid name %v", cmd.Objects)
 		}
 
-		return name, true
+		return name, nil
 	}()
 
-	if !ok {
-		return NewErrorResponse(&Command{
-			Name:          "onStatus",
-			StreamID:      0,
-			TransactionID: 0,
-			Objects: []interface{}{
-				nil,
-				StatusPublishBadName,
-			},
-		})
+	if err != nil {
+		return ErrPublishBadName(err)
 	}
 
-	status := StatusPublishStart
-	status.Description = fmt.Sprintf("FCPublish to stream %s.", streamName)
 	return c.SendCommand(&Command{
 		Name:          "onFCPublish",
 		StreamID:      0,
 		TransactionID: 0,
 		Objects: []interface{}{
 			nil,
-			status,
+			StatusPublishStart(fmt.Sprintf("FCPublish to stream %s.", streamName)),
 		},
 	})
 }
@@ -480,12 +479,20 @@ func (c *conn) waitClose() {
 
 func (c *conn) readFrom() {
 	n, err := c.chunkStream.ReadFrom(c.netConn)
-	log.Debug("readLoop() ended after %d bytes with err %s", n, err)
+	if err == nil || err == io.EOF {
+		log.Debug("readLoop ended after %d bytes", n)
+	} else {
+		log.Debug("readLoop ended after %d bytes with err %s", n, err)
+	}
 	c.readDone <- true
 }
 
 func (c *conn) writeTo() {
 	n, err := c.chunkStream.WriteTo(c.netConn)
-	log.Debug("writeLoop() ended after %d bytes with err %s", n, err)
+	if err == nil {
+		log.Debug("readLoop ended after %d bytes", n)
+	} else {
+		log.Debug("readLoop ended after %d bytes with err %s", n, err)
+	}
 	c.writeDone <- true
 }

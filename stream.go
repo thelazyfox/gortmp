@@ -3,7 +3,6 @@ package rtmp
 import (
 	"bytes"
 	"fmt"
-	"strings"
 )
 
 type Stream interface {
@@ -120,48 +119,38 @@ func (s *stream) Invoke(cmd *Command) error {
 }
 
 func (s *stream) invokePublish(cmd *Command) error {
-	streamName, ok := func() (string, bool) {
-		if cmd.Objects == nil || len(cmd.Objects) != 3 {
-			return "", false
+	streamName, err := func() (string, error) {
+		if cmd.Objects == nil || len(cmd.Objects) < 3 {
+			return "", fmt.Errorf("publish error: invalid args %v", cmd.Objects)
 		}
 
 		name, ok := cmd.Objects[1].(string)
 		if !ok || len(name) == 0 {
-			return "", false
+			return "", fmt.Errorf("publish error: invalid args %v", cmd.Objects)
 		}
 
-		return name, true
+		return name, nil
 	}()
 
-	if !ok {
-		return NewErrorResponse(&Command{
-			Name:          "onStatus",
-			StreamID:      cmd.StreamID,
-			TransactionID: cmd.TransactionID,
-			Objects: []interface{}{
-				nil,
-				StatusPublishBadName,
-			},
-		})
+	if err != nil {
+		return ErrPublishBadName(err)
 	}
 
 	s.name = streamName
 	s.publishing = true
 
-	status := StatusPublishStart
-	status.Description = fmt.Sprintf("Publishing %s.", strings.Split(streamName, "?")[0])
-	err := s.conn.SendCommand(&Command{
+	err = s.conn.SendCommand(&Command{
 		Name:          "onStatus",
 		StreamID:      cmd.StreamID,
 		TransactionID: cmd.TransactionID,
 		Objects: []interface{}{
 			nil,
-			status,
+			StatusPublishStart(fmt.Sprintf("Publishing %s.", streamName)),
 		},
 	})
 
 	if err != nil {
-		return fmt.Errorf("no play stream specified")
+		return err
 	}
 
 	if s.handler != nil {
@@ -171,27 +160,30 @@ func (s *stream) invokePublish(cmd *Command) error {
 }
 
 func (s *stream) invokePlay(cmd *Command) error {
-	streamName, ok := func() (string, bool) {
+	streamName, err := func() (string, error) {
 		if cmd.Objects == nil || len(cmd.Objects) < 2 {
-			return "", false
+			return "", fmt.Errorf("play error: invalid args %v", cmd.Objects)
 		}
 
 		name, ok := cmd.Objects[1].(string)
-		return name, ok
+		if !ok {
+			return "", fmt.Errorf("play error: invalid args %v", cmd.Objects)
+		}
+
+		return name, nil
 	}()
 
-	if !ok {
-		return fmt.Errorf("no play stream specified")
+	if err != nil {
+		return ErrPlayFailed(err)
 	}
 
-	var err error
 	err = s.conn.SendCommand(&Command{
 		Name:          "onStatus",
 		TransactionID: 0,
 		Objects: []interface{}{
 			nil,
 			NetStreamPlayInfo{
-				Status:  StatusPlayReset,
+				Status:  StatusPlayReset("reset"),
 				Details: streamName,
 			},
 		},
@@ -207,7 +199,7 @@ func (s *stream) invokePlay(cmd *Command) error {
 		Objects: []interface{}{
 			nil,
 			NetStreamPlayInfo{
-				Status:  StatusPlayStart,
+				Status:  StatusPlayStart("play"),
 				Details: streamName,
 			},
 		},

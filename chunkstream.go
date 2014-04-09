@@ -3,7 +3,6 @@ package rtmp
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/thelazyfox/gortmp/log"
 )
 
 type ChunkStream interface {
@@ -13,49 +12,24 @@ type ChunkStream interface {
 	SendSetChunkSize(uint32) error
 	SendSetWindowSize(uint32) error
 	SendSetPeerBandwidth(uint32, uint8) error
-
-	OnMessage(msg *Message)
-	OnWindowFull(uint32)
+	SendAcknowledgement(uint32) error
 }
 
 type ChunkStreamHandler interface {
 	OnMessage(msg *Message)
+	OnWindowFull(uint32)
 }
 
 type chunkStream struct {
 	ChunkStreamReader
 	ChunkStreamWriter
-
-	handler ChunkStreamHandler
 }
 
 func NewChunkStream(handler ChunkStreamHandler) ChunkStream {
-	cs := &chunkStream{handler: handler}
-	cs.ChunkStreamReader = NewChunkStreamReader(cs)
-	cs.ChunkStreamWriter = NewChunkStreamWriter()
-	return cs
-}
-
-func (cs *chunkStream) OnMessage(msg *Message) {
-	if msg.ChunkStreamID == CS_ID_PROTOCOL_CONTROL {
-		switch msg.Type {
-		case SET_CHUNK_SIZE:
-			return // handled in ChunkStreamReader
-		case WINDOW_ACKNOWLEDGEMENT_SIZE:
-			return // handled in ChunkStreamReader
-		}
+	return &chunkStream{
+		ChunkStreamReader: NewChunkStreamReader(handler),
+		ChunkStreamWriter: NewChunkStreamWriter(),
 	}
-
-	cs.handler.OnMessage(msg)
-}
-
-func (cs *chunkStream) OnWindowFull(count uint32) {
-	go func() {
-		err := cs.sendAcknowledgement(count)
-		if err != nil {
-			log.Debug("Error sending window ack: %s", err)
-		}
-	}()
 }
 
 func (cs *chunkStream) SendSetPeerBandwidth(bw uint32, limit uint8) error {
@@ -100,9 +74,6 @@ func (cs *chunkStream) SendSetWindowSize(size uint32) error {
 		Size:              uint32(buf.Len()),
 	}
 
-	log.Trace("SetChunkSize: %+v", msg)
-	log.Trace("Buf: %#v len=%d", buf, buf.Len())
-
 	return cs.Send(msg)
 }
 
@@ -126,7 +97,7 @@ func (cs *chunkStream) SendSetChunkSize(chunkSize uint32) error {
 	return cs.Send(msg)
 }
 
-func (cs *chunkStream) sendAcknowledgement(inCount uint32) error {
+func (cs *chunkStream) SendAcknowledgement(inCount uint32) error {
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.BigEndian, inCount)
 

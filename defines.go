@@ -133,21 +133,57 @@ type NetStreamPlayInfo struct {
 }
 
 var (
-	StatusConnectAccepted = Status{"status", "NetConnection.Connect.Success", "Connection succeeded."}
-	StatusConnectRejected = Status{"error", "NetConnection.Connect.Rejected", "Connection rejected."}
-	StatusPublishBadName  = Status{"error", "NetStream.Publish.BadName", "Invalid publish stream name."}
-	StatusPublishStart    = Status{"status", "NetStream.Publish.Start", "NetStream publish succeeded."}
-	StatusPlayReset       = Status{"status", "NetStream.Play.Reset", "Play reset."}
-	StatusPlayStart       = Status{"status", "NetStream.Play.Start", "Play start."}
-
 	DefaultConnectProperties = ConnectProperties{
 		FmsVer:       "FMS/3,5,7,7009",
 		Capabilities: 31,
 		Mode:         1,
 	}
 	DefaultConnectInformation = ConnectInformation{
-		Status:         StatusConnectAccepted,
+		Status:         StatusConnectAccepted("Connection accepted."),
 		Data:           ConnectData{"3,5,7,7009"},
 		ObjectEncoding: 0,
 	}
 )
+
+// Status constructors
+func StatusConnectAccepted(desc string) Status {
+	return Status{"status", "NetConnection.Connect.Success", desc}
+}
+func StatusConnectRejected(desc string) Status {
+	return Status{"error", "NetConnection.Connect.Rejected", desc}
+}
+func StatusConnectClosed(desc string) Status {
+	return Status{"status", "NetConnection.Connect.Closed", desc}
+}
+func StatusPublishBadName(desc string) Status {
+	return Status{"error", "NetStream.Publish.BadName", desc}
+}
+func StatusPublishStart(desc string) Status {
+	return Status{"status", "NetStream.Publish.Start", desc}
+}
+func StatusPlayReset(desc string) Status {
+	return Status{"status", "NetStream.Play.Reset", desc}
+}
+func StatusPlayStart(desc string) Status {
+	return Status{"status", "NetStream.Play.Start", desc}
+}
+func StatusPlayFailed(desc string) Status {
+	return Status{"status", "NetStream.Play.Failed", desc}
+}
+func StatusCallFailed(desc string) Status {
+	return Status{"error", "NetStream.Call.Failed", desc}
+}
+
+// ErrorStatus constructors
+func ErrConnectRejected(err error) ErrorStatus {
+	return NewErrorStatus(err, StatusConnectRejected(err.Error()))
+}
+func ErrPublishBadName(err error) ErrorStatus {
+	return NewErrorStatus(err, StatusPublishBadName(err.Error()))
+}
+func ErrPlayFailed(err error) ErrorStatus {
+	return NewErrorStatus(err, StatusPlayFailed(err.Error()))
+}
+func ErrCallFailed(err error) ErrorStatus {
+	return NewErrorStatus(err, StatusCallFailed(err.Error()))
+}

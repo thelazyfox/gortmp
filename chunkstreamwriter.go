@@ -43,8 +43,8 @@ type chunkStreamWriter struct {
 
 	mu sync.RWMutex
 
-	done chan bool
-	once sync.Once
+	done     chan bool
+	doneOnce sync.Once
 }
 
 type outChunkStream struct {
@@ -110,7 +110,7 @@ func (csw *chunkStreamWriter) CreateChunkStream(p int) (uint32, error) {
 }
 
 func (csw *chunkStreamWriter) Close() {
-	csw.once.Do(func() {
+	csw.doneOnce.Do(func() {
 		close(csw.done)
 	})
 }

@@ -1,26 +1,37 @@
 package rtmp
 
-import (
-	"fmt"
-)
-
-type ErrorResponse interface {
-	error
+type ErrorCommand interface {
+	Error() string
 	Command() *Command
 }
 
-type errorResponse struct {
+type ErrorStatus interface {
+	Error() string
+	Status() Status
+}
+
+type errorCommand struct {
+	error
 	cmd *Command
 }
 
-func (e *errorResponse) Command() *Command {
-	return e.cmd
+type errorStatus struct {
+	error
+	status Status
 }
 
-func (e *errorResponse) Error() string {
-	return fmt.Sprintf("%#v", e.cmd)
+func NewErrorCommand(err error, cmd *Command) ErrorCommand {
+	return &errorCommand{err, cmd}
 }
 
-func NewErrorResponse(cmd *Command) ErrorResponse {
-	return &errorResponse{cmd}
+func NewErrorStatus(err error, status Status) ErrorStatus {
+	return &errorStatus{err, status}
+}
+
+func (ec *errorCommand) Command() *Command {
+	return ec.cmd
+}
+
+func (es *errorStatus) Status() Status {
+	return es.status
 }
