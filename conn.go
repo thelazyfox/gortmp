@@ -215,12 +215,14 @@ func (c *conn) OnMessage(msg *Message) {
 		cmd, err := c.parseAmf3(msg)
 		if err != nil {
 			c.Error(fmt.Errorf("invalid COMMAND_AMF3 message"))
+			return
 		}
 		c.invoke(cmd)
 	case COMMAND_AMF0:
 		cmd, err := c.parseAmf0(msg, nil)
 		if err != nil {
 			c.Error(fmt.Errorf("invalid COMMAND_AMF0 message"))
+			return
 		}
 		c.invoke(cmd)
 	default:
