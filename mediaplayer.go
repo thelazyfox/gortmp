@@ -39,18 +39,19 @@ func NewMediaPlayer(mediaStream MediaStream, stream Stream) (MediaPlayer, error)
 
 func (mp *mediaPlayer) loop() {
 	defer mp.Close()
+	defer func() {
+		close(mp.done)
+	}()
 
 	for {
 		tag, err := mp.mb.Get()
 		if err != nil {
-			mp.writeTag(tag)
-		} else {
 			log.Info("MediaPlayer end: %s", err)
-			return // buffer end
+			return
+		} else {
+			mp.writeTag(tag)
 		}
 	}
-
-	close(mp.done)
 }
 
 func (mp *mediaPlayer) Wait() {

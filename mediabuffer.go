@@ -44,6 +44,7 @@ func (mb *mediaBuffer) MediaStream() MediaStream {
 
 func (mb *mediaBuffer) loop() {
 	defer func() {
+		log.Debug("MediaBuffer shutdown")
 		close(mb.out)
 	}()
 

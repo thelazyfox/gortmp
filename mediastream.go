@@ -144,8 +144,10 @@ func (ms *mediaStream) loop() {
 				sub <- *audioHeader
 			}
 		case sub := <-ms.unsub:
-			delete(subs, sub)
-			close(sub)
+			if _, found := subs[sub]; found {
+				delete(subs, sub)
+				close(sub)
+			}
 		case <-ms.done:
 			return // shutdown
 		}
