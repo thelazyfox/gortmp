@@ -8,6 +8,8 @@ import (
 	"github.com/thelazyfox/gortmp/log"
 	"github.com/zhangpeihao/goflv"
 	"net"
+	"net/http"
+	_ "net/http/pprof"
 	"time"
 )
 
@@ -63,7 +65,7 @@ func TrackStarvation(streamName string, ms rtmp.MediaStream) {
 	}
 
 	defer ms.Unsubscribe(ch)
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	var curTs, lastTs int64
@@ -101,7 +103,9 @@ func TrackStarvation(streamName string, ms rtmp.MediaStream) {
 					sum += e.Value.(int64)
 				}
 
-				log.Info("TrackStarvation for stream %s - %d", streamName, sum/int64(history.Len()))
+				// this mimics the behavior of the wowza starvation tracker
+				fmt.Printf("TrackStarvation starved = %t\n", float64(sum)/float64(clockDelta)/float64(history.Len()) > 0.05)
+				fmt.Printf("TrackStarvation for stream %s - %d\n", streamName, sum/int64(history.Len()))
 			}
 		}
 	}
@@ -110,6 +114,10 @@ func TrackStarvation(streamName string, ms rtmp.MediaStream) {
 func main() {
 	flag.Parse()
 	log.SetLogLevel(log.DEBUG)
+
+	go func() {
+		fmt.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
 
 	ln, err := net.Listen("tcp", *listenAddr)
 	if err != nil {
