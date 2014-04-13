@@ -153,7 +153,7 @@ func (csr *chunkStreamReader) readChunk(r Reader) (int64, error) {
 			Timestamp:         header.RealTimestamp(),
 			Size:              header.MessageLength,
 			StreamID:          header.MessageStreamID,
-			Buf:               new(bytes.Buffer),
+			Buf:               bytes.NewBuffer(make([]byte, 0, header.MessageLength)),
 			IsInbound:         true,
 			AbsoluteTimestamp: absoluteTimestamp,
 		}
@@ -169,6 +169,7 @@ func (csr *chunkStreamReader) readChunk(r Reader) (int64, error) {
 		remain = csr.chunkSize
 	}
 
+	// TODO: read straight into the buffer
 	n64, err := io.CopyN(message.Buf, r, int64(remain))
 	inCount += n64
 

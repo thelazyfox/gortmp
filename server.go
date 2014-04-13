@@ -231,7 +231,7 @@ func (ss *serverStreamHandler) OnReceive(stream Stream, msg *Message) {
 		case AUDIO_TYPE:
 			fallthrough
 		case DATA_AMF0:
-			tag := FlvTag{
+			tag := &FlvTag{
 				Type:      msg.Type,
 				Timestamp: msg.AbsoluteTimestamp,
 				Size:      msg.Size,

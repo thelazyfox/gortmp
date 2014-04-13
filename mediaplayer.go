@@ -58,7 +58,7 @@ func (mp *mediaPlayer) Wait() {
 	<-mp.done
 }
 
-func (mp *mediaPlayer) writeTag(tag FlvTag) {
+func (mp *mediaPlayer) writeTag(tag *FlvTag) {
 	mp.s.Send(&Message{
 		Type:              tag.Type,
 		AbsoluteTimestamp: tag.Timestamp,

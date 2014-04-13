@@ -50,16 +50,16 @@ func (m *mediaStreamMap) Del(name string) {
 
 // MediaStream pubsub
 type MediaStream interface {
-	Publish(FlvTag) error
-	Subscribe() (chan FlvTag, error)
-	Unsubscribe(chan FlvTag)
+	Publish(*FlvTag) error
+	Subscribe() (chan *FlvTag, error)
+	Unsubscribe(chan *FlvTag)
 	Close()
 }
 
 type mediaStream struct {
-	pub   chan FlvTag
-	sub   chan chan FlvTag
-	unsub chan chan FlvTag
+	pub   chan *FlvTag
+	sub   chan chan *FlvTag
+	unsub chan chan *FlvTag
 
 	done     chan bool
 	doneOnce sync.Once
@@ -67,9 +67,9 @@ type mediaStream struct {
 
 func NewMediaStream() MediaStream {
 	ms := &mediaStream{
-		pub:   make(chan FlvTag),
-		sub:   make(chan chan FlvTag),
-		unsub: make(chan chan FlvTag),
+		pub:   make(chan *FlvTag),
+		sub:   make(chan chan *FlvTag),
+		unsub: make(chan chan *FlvTag),
 		done:  make(chan bool),
 	}
 
@@ -80,7 +80,7 @@ func NewMediaStream() MediaStream {
 
 func (ms *mediaStream) loop() {
 	var dataHeader, audioHeader, videoHeader *FlvTag
-	subs := make(map[chan FlvTag]bool)
+	subs := make(map[chan *FlvTag]bool)
 
 	// shut down defers
 	defer func() {
@@ -100,7 +100,7 @@ func (ms *mediaStream) loop() {
 				}
 				header := tag.GetAudioHeader()
 				if header.SoundFormat == 10 && header.AACPacketType == 0 {
-					audioHeader = &tag
+					audioHeader = tag
 				}
 			case VIDEO_TYPE:
 				if videoHeader != nil {
@@ -108,13 +108,13 @@ func (ms *mediaStream) loop() {
 				}
 				header := tag.GetVideoHeader()
 				if header.FrameType == 1 && header.CodecID == 7 && header.AVCPacketType == 0 {
-					videoHeader = &tag
+					videoHeader = tag
 				}
 			case DATA_AMF0:
 				if dataHeader != nil {
 					break
 				}
-				dataHeader = &tag
+				dataHeader = tag
 			}
 
 			// send tags to streams
@@ -135,13 +135,13 @@ func (ms *mediaStream) loop() {
 		case sub := <-ms.sub:
 			subs[sub] = false
 			if dataHeader != nil {
-				sub <- *dataHeader
+				sub <- dataHeader
 			}
 			if videoHeader != nil {
-				sub <- *videoHeader
+				sub <- videoHeader
 			}
 			if audioHeader != nil {
-				sub <- *audioHeader
+				sub <- audioHeader
 			}
 		case sub := <-ms.unsub:
 			if _, found := subs[sub]; found {
@@ -154,7 +154,7 @@ func (ms *mediaStream) loop() {
 	}
 }
 
-func (ms *mediaStream) Publish(tag FlvTag) error {
+func (ms *mediaStream) Publish(tag *FlvTag) error {
 	// select to avoid blocking when the loop exits
 	select {
 	case ms.pub <- tag:
@@ -164,8 +164,8 @@ func (ms *mediaStream) Publish(tag FlvTag) error {
 	}
 }
 
-func (ms *mediaStream) Subscribe() (chan FlvTag, error) {
-	ch := make(chan FlvTag)
+func (ms *mediaStream) Subscribe() (chan *FlvTag, error) {
+	ch := make(chan *FlvTag)
 
 	select {
 	case ms.sub <- ch:
@@ -175,7 +175,7 @@ func (ms *mediaStream) Subscribe() (chan FlvTag, error) {
 	}
 }
 
-func (ms *mediaStream) Unsubscribe(ch chan FlvTag) {
+func (ms *mediaStream) Unsubscribe(ch chan *FlvTag) {
 	select {
 	case ms.unsub <- ch:
 	case <-ms.done:

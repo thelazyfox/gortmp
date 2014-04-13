@@ -6,15 +6,15 @@ import (
 )
 
 type MediaBuffer interface {
-	Get() (FlvTag, error)
+	Get() (*FlvTag, error)
 	Close()
 	MediaStream() MediaStream
 }
 
 type mediaBuffer struct {
 	ms      MediaStream
-	sub     chan FlvTag
-	out     chan FlvTag
+	sub     chan *FlvTag
+	out     chan *FlvTag
 	tags    list.List
 	size    uint32
 	maxSize uint32
@@ -29,7 +29,7 @@ func NewMediaBuffer(ms MediaStream, maxSize uint32) (MediaBuffer, error) {
 	mb := &mediaBuffer{
 		ms:      ms,
 		sub:     sub,
-		out:     make(chan FlvTag),
+		out:     make(chan *FlvTag),
 		maxSize: maxSize,
 	}
 
@@ -67,7 +67,7 @@ func (mb *mediaBuffer) loop() {
 				} else {
 					return //shutdown
 				}
-			case mb.out <- out.Value.(FlvTag):
+			case mb.out <- out.Value.(*FlvTag):
 				mb.remove(out)
 			}
 
@@ -75,7 +75,7 @@ func (mb *mediaBuffer) loop() {
 	}
 }
 
-func (mb *mediaBuffer) push(tag FlvTag) {
+func (mb *mediaBuffer) push(tag *FlvTag) {
 	if mb.size+tag.Size > mb.maxSize {
 		log.Debug("MediaBuffer dropping frame")
 	} else {
@@ -89,15 +89,15 @@ func (mb *mediaBuffer) front() *list.Element {
 }
 
 func (mb *mediaBuffer) remove(e *list.Element) {
-	tag := mb.tags.Remove(e).(FlvTag)
+	tag := mb.tags.Remove(e).(*FlvTag)
 	mb.size -= tag.Size
 }
 
-func (mb *mediaBuffer) Get() (FlvTag, error) {
+func (mb *mediaBuffer) Get() (*FlvTag, error) {
 	if tag, ok := <-mb.out; ok {
 		return tag, nil
 	} else {
-		return FlvTag{}, MediaStreamClosed
+		return nil, MediaStreamClosed
 	}
 }
 
