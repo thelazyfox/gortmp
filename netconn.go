@@ -1,27 +1,22 @@
 package rtmp
 
 import (
-	"bufio"
+	"io"
 	"net"
 	"time"
 )
 
 type NetConn interface {
-	Reader
-	Writer
+	net.Conn
+	io.ByteReader
+	io.ByteWriter
 	Flush() error
-	Close() error
-	Conn() net.Conn
 
 	SetMaxIdle(time.Duration)
 }
 
 type netConn struct {
-	conn net.Conn
-
-	*bufio.Reader
-	*bufio.Writer
-
+	net.Conn
 	maxIdle time.Duration
 }
 
@@ -55,24 +50,26 @@ func NewNetConn(conn net.Conn, inCounter *Counter, outCounter *Counter) NetConn 
 	}
 
 	return &netConn{
-		conn:   netcounter,
-		Reader: bufio.NewReader(netcounter),
-		Writer: bufio.NewWriter(netcounter),
+		Conn: netcounter,
 	}
+}
+
+func (n *netConn) Flush() error {
+	return nil
+}
+
+func (n *netConn) ReadByte() (byte, error) {
+	b := [1]byte{}
+	_, err := n.Read(b[:])
+	return b[0], err
 }
 
 func (n *netConn) SetMaxIdle(t time.Duration) {
 	n.maxIdle = t
 }
 
-func (n *netConn) Close() error {
-	return n.conn.Close()
-}
-
-func (n *netConn) Conn() net.Conn {
-	return n.conn
-}
-
-func (n *netConn) Read(b []byte) (int, error) {
-	return n.Reader.Read(b)
+func (n *netConn) WriteByte(b byte) error {
+	buf := [1]byte{b}
+	_, err := n.Write(buf[:])
+	return err
 }

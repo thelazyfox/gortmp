@@ -104,7 +104,7 @@ func (c *conn) SendCommand(cmd *Command) error {
 }
 
 func (c *conn) Addr() net.Addr {
-	return c.netConn.Conn().RemoteAddr()
+	return c.netConn.RemoteAddr()
 }
 
 func (c *conn) Flush() error {

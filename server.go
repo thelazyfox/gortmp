@@ -134,7 +134,7 @@ func (s *server) handle(conn net.Conn) {
 		s.handshakeFails.Add(1)
 		s.connections.Add(-1)
 		log.Error("Connection from %s failed handshake: %s", conn.RemoteAddr().String(), err)
-		netConn.Conn().Close()
+		netConn.Close()
 		return
 	}
 
