@@ -103,7 +103,7 @@ func (header *Header) ReadHeader(rbuf Reader, vfmt uint8, csi uint32, lastheader
 	header.Fmt = vfmt
 	header.ChunkStreamID = csi
 	var b byte
-	tmpBuf := make([]byte, 4)
+	tmpBuf := [4]byte{}
 	switch header.Fmt {
 	case HEADER_FMT_FULL:
 		// Chunks of Type 0 are 11 bytes long. This type MUST be used at the
@@ -125,25 +125,25 @@ func (header *Header) ReadHeader(rbuf Reader, vfmt uint8, csi uint32, lastheader
 			return
 		}
 		n += 3
-		header.Timestamp = binary.BigEndian.Uint32(tmpBuf)
+		header.Timestamp = binary.BigEndian.Uint32(tmpBuf[:])
 		_, err = io.ReadFull(rbuf, tmpBuf[1:4])
 		if err != nil {
 			return
 		}
 		n += 3
-		header.MessageLength = binary.BigEndian.Uint32(tmpBuf)
+		header.MessageLength = binary.BigEndian.Uint32(tmpBuf[:])
 		b, err = rbuf.ReadByte()
 		if err != nil {
 			return
 		}
 		n += 1
 		header.MessageTypeID = uint8(b)
-		_, err = io.ReadFull(rbuf, tmpBuf)
+		_, err = io.ReadFull(rbuf, tmpBuf[:])
 		if err != nil {
 			return
 		}
 		n += 4
-		header.MessageStreamID = binary.LittleEndian.Uint32(tmpBuf)
+		header.MessageStreamID = binary.LittleEndian.Uint32(tmpBuf[:])
 	case HEADER_FMT_SAME_STREAM:
 		// Chunks of Type 1 are 7 bytes long. The message stream ID is not
 		// included; this chunk takes the same stream ID as the preceding chunk.
@@ -164,13 +164,13 @@ func (header *Header) ReadHeader(rbuf Reader, vfmt uint8, csi uint32, lastheader
 			return
 		}
 		n += 3
-		header.Timestamp = binary.BigEndian.Uint32(tmpBuf)
+		header.Timestamp = binary.BigEndian.Uint32(tmpBuf[:])
 		_, err = io.ReadFull(rbuf, tmpBuf[1:4])
 		if err != nil {
 			return
 		}
 		n += 3
-		header.MessageLength = binary.BigEndian.Uint32(tmpBuf)
+		header.MessageLength = binary.BigEndian.Uint32(tmpBuf[:])
 		b, err = rbuf.ReadByte()
 		if err != nil {
 			return
@@ -196,7 +196,7 @@ func (header *Header) ReadHeader(rbuf Reader, vfmt uint8, csi uint32, lastheader
 			return
 		}
 		n += 3
-		header.Timestamp = binary.BigEndian.Uint32(tmpBuf)
+		header.Timestamp = binary.BigEndian.Uint32(tmpBuf[:])
 
 	case HEADER_FMT_CONTINUATION:
 		// Chunks of Type 3 have no header. Stream ID, message length and
@@ -223,12 +223,12 @@ func (header *Header) ReadHeader(rbuf Reader, vfmt uint8, csi uint32, lastheader
 	// Todo: Test with FMS
 	if (header.Fmt != HEADER_FMT_CONTINUATION && header.Timestamp >= 0xffffff) ||
 		(header.Fmt == HEADER_FMT_CONTINUATION && lastheader != nil && lastheader.ExtendedTimestamp > 0) {
-		_, err = io.ReadFull(rbuf, tmpBuf)
+		_, err = io.ReadFull(rbuf, tmpBuf[:])
 		if err != nil {
 			return
 		}
 		n += 4
-		header.ExtendedTimestamp = binary.BigEndian.Uint32(tmpBuf)
+		header.ExtendedTimestamp = binary.BigEndian.Uint32(tmpBuf[:])
 		// logger.ModulePrintf(logHandler, log.LOG_LEVEL_TRACE,
 		// 	"Extened timestamp: %d, timestamp: %d, fmt: %d\n", header.ExtendedTimestamp, header.Timestamp, header.Fmt)
 		header.Dump("Extended timestamp")

@@ -83,6 +83,8 @@ func NewBufferPool() BufferPool {
 type StaticBuffer interface {
 	io.Reader
 	io.Writer
+	io.ReaderFrom
+
 	Peek(b []byte) int
 	Reset()
 	Len() int
@@ -147,12 +149,28 @@ func (sb *staticBuffer) Clone() StaticBuffer {
 	return buf
 }
 
+func (sb *staticBuffer) ReadFrom(r io.Reader) (int64, error) {
+	n, err := r.Read(sb.bytes[sb.woff:])
+	sb.woff += n
+
+	if err == io.EOF {
+		return int64(n), nil
+	} else if sb.woff == len(sb.bytes) {
+		return int64(n), io.ErrShortWrite
+	} else {
+		return int64(n), err
+	}
+}
+
 type DynamicBuffer interface {
 	io.Reader
 	io.Writer
 	io.ByteReader
 	io.ByteWriter
 	io.Closer
+
+	io.ReaderFrom
+
 	Peek(b []byte) int
 	Len() int
 
@@ -258,4 +276,24 @@ func (db *dynamicBuffer) Clone() DynamicBuffer {
 		clone.buffers.PushBack(e.Value.(StaticBuffer).Clone())
 	}
 	return clone
+}
+
+func (db *dynamicBuffer) ReadFrom(r io.Reader) (int64, error) {
+	if db.buffers.Len() == 0 {
+		db.buffers.PushBack(pool.Alloc())
+	}
+
+	e := db.buffers.Back()
+	written := int64(0)
+	for {
+		n, err := e.Value.(StaticBuffer).ReadFrom(r)
+		written += n
+
+		if err == io.ErrShortWrite {
+			db.buffers.PushBack(pool.Alloc())
+			e = db.buffers.Back()
+		} else {
+			return written, err
+		}
+	}
 }
