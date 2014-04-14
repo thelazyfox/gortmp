@@ -35,7 +35,9 @@ func (bp *bufferPool) loop() {
 		select {
 		case bp.alloc <- buffers.Front().Value.(StaticBuffer):
 			buffers.Remove(buffers.Front())
-			buffers.PushFront(NewStaticBuffer(4096))
+			if buffers.Len() == 0 {
+				buffers.PushFront(NewStaticBuffer(4096))
+			}
 		case buf := <-bp.free:
 			buf.Reset()
 			buffers.PushFront(buf)
