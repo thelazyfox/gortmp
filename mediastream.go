@@ -160,7 +160,7 @@ func (ms *mediaStream) loop() {
 				}
 				header := tag.GetAudioHeader()
 				if header.SoundFormat == 10 && header.AACPacketType == 0 {
-					audioHeader = tag
+					audioHeader = tag.Clone()
 				}
 			case VIDEO_TYPE:
 				ms.videoBytes.Add(int64(tag.Size))
@@ -174,13 +174,13 @@ func (ms *mediaStream) loop() {
 					ms.updateBps(int64(tag.Timestamp))
 				}
 				if header.FrameType == 1 && header.CodecID == 7 && header.AVCPacketType == 0 {
-					videoHeader = tag
+					videoHeader = tag.Clone()
 				}
 			case DATA_AMF0:
 				if dataHeader != nil {
 					break
 				}
-				dataHeader = tag
+				dataHeader = tag.Clone()
 			}
 
 			// send tags to streams
@@ -191,23 +191,24 @@ func (ms *mediaStream) loop() {
 						header = tag.GetVideoHeader()
 					}
 					if header.FrameType == 1 {
-						sub <- tag
+						sub <- tag.Clone()
 						subs[sub] = true
 					}
 				} else if started {
-					sub <- tag
+					sub <- tag.Clone()
 				}
 			}
+			tag.Buf.Close()
 		case sub := <-ms.sub:
 			subs[sub] = false
 			if dataHeader != nil {
-				sub <- dataHeader
+				sub <- dataHeader.Clone()
 			}
 			if videoHeader != nil {
-				sub <- videoHeader
+				sub <- videoHeader.Clone()
 			}
 			if audioHeader != nil {
-				sub <- audioHeader
+				sub <- audioHeader.Clone()
 			}
 		case sub := <-ms.unsub:
 			if _, found := subs[sub]; found {

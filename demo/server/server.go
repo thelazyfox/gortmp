@@ -2,15 +2,15 @@ package main
 
 import (
 	"container/list"
+	_ "expvar"
 	"flag"
 	"fmt"
 	"github.com/thelazyfox/gortmp"
 	"github.com/thelazyfox/gortmp/log"
-	"github.com/zhangpeihao/goflv"
+	// "github.com/zhangpeihao/goflv"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
-	_ "expvar"
 	"time"
 )
 
@@ -165,6 +165,7 @@ func TrackStarvation(streamName string, ms rtmp.MediaStream) {
 				if tag.Type == rtmp.VIDEO_TYPE {
 					curTs = int64(tag.Timestamp)
 				}
+				tag.Buf.Close()
 			} else {
 				return
 			}

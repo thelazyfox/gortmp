@@ -21,6 +21,15 @@ type FlvTag struct {
 	Buf       DynamicBuffer
 }
 
+func (f *FlvTag) Clone() *FlvTag {
+	return &FlvTag{
+		Type:      f.Type,
+		Timestamp: f.Timestamp,
+		Size:      f.Size,
+		Buf:       f.Buf.Clone(),
+	}
+}
+
 func (f *FlvTag) GetAudioHeader() *FlvAudioHeader {
 	if f.Type != AUDIO_TYPE {
 		return nil
@@ -50,6 +59,7 @@ func (f *FlvTag) GetVideoHeader() *FlvVideoHeader {
 
 	header := &FlvVideoHeader{}
 	buf := make([]byte, 2)
+	f.Buf.Peek(buf)
 
 	var bits uint8 = buf[0]
 

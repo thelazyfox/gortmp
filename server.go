@@ -322,6 +322,9 @@ func (ss *serverStreamHandler) OnReceive(stream Stream, msg *Message) {
 				Buf:       msg.Buf,
 			}
 
+			// steal the buffer
+			msg.Buf = nil
+
 			ss.mediaStream.Publish(tag)
 		}
 	}

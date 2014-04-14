@@ -82,6 +82,9 @@ func (csr *chunkStreamReader) handleMessage(msg *Message) {
 	}
 
 	csr.handler.OnMessage(msg)
+	if msg.Buf != nil {
+		msg.Buf.Close()
+	}
 }
 
 func (csr *chunkStreamReader) readChunk(r Reader) (int64, error) {

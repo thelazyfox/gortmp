@@ -78,6 +78,7 @@ func (mb *mediaBuffer) loop() {
 func (mb *mediaBuffer) push(tag *FlvTag) {
 	if mb.size+tag.Size > mb.maxSize {
 		log.Debug("MediaBuffer dropping frame")
+		tag.Buf.Close()
 	} else {
 		mb.size += tag.Size
 		mb.tags.PushBack(tag)

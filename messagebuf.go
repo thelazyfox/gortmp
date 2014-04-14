@@ -37,6 +37,7 @@ func (bp *bufferPool) loop() {
 			buffers.Remove(buffers.Front())
 			buffers.PushFront(NewStaticBuffer(4096))
 		case buf := <-bp.free:
+			buf.Reset()
 			buffers.PushFront(buf)
 		case <-bp.done:
 			return
@@ -83,6 +84,8 @@ type StaticBuffer interface {
 	Peek(b []byte) int
 	Reset()
 	Len() int
+
+	Clone() StaticBuffer
 }
 
 type staticBuffer struct {
@@ -98,7 +101,7 @@ func NewStaticBuffer(size int) StaticBuffer {
 }
 
 func (sb *staticBuffer) Peek(b []byte) int {
-	return copy(b, sb.bytes[sb.roff:])
+	return copy(b, sb.bytes[sb.roff:sb.woff])
 }
 
 func (sb *staticBuffer) Read(b []byte) (int, error) {
@@ -136,6 +139,12 @@ func (sb *staticBuffer) Len() int {
 	return sb.woff - sb.roff
 }
 
+func (sb *staticBuffer) Clone() StaticBuffer {
+	buf := pool.Alloc()
+	buf.Write(sb.bytes[:sb.woff])
+	return buf
+}
+
 type DynamicBuffer interface {
 	io.Reader
 	io.Writer
@@ -144,11 +153,12 @@ type DynamicBuffer interface {
 	io.Closer
 	Peek(b []byte) int
 	Len() int
+
+	Clone() DynamicBuffer
 }
 
 type dynamicBuffer struct {
 	buffers list.List
-	pool    BufferPool
 }
 
 func NewDynamicBuffer() DynamicBuffer {
@@ -238,4 +248,12 @@ func (db *dynamicBuffer) Len() int {
 		l += e.Value.(StaticBuffer).Len()
 	}
 	return l
+}
+
+func (db *dynamicBuffer) Clone() DynamicBuffer {
+	clone := &dynamicBuffer{}
+	for e := db.buffers.Front(); e != nil; e = e.Next() {
+		clone.buffers.PushBack(e.Value.(StaticBuffer).Clone())
+	}
+	return clone
 }
