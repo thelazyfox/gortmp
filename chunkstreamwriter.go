@@ -182,7 +182,9 @@ func (csw *chunkStreamWriter) writeMessage(w Writer, msg *Message, cs *outChunkS
 
 func (csw *chunkStreamWriter) checkSetChunkSize(msg *Message) {
 	if msg.ChunkStreamID == CS_ID_PROTOCOL_CONTROL && msg.Type == SET_CHUNK_SIZE {
-		csw.chunkSize = binary.BigEndian.Uint32(msg.Buf.Bytes())
+		buf := make([]byte, 4)
+		msg.Buf.Peek(buf)
+		csw.chunkSize = binary.BigEndian.Uint32(buf)
 	}
 }
 
@@ -216,7 +218,9 @@ func (csw *chunkStreamWriter) writeChunk(w Writer, cs *outChunkStream) (int64, e
 	var tmpChunkSize uint32
 
 	if cs.currentMessage.Type == SET_CHUNK_SIZE {
-		tmpChunkSize = binary.BigEndian.Uint32(cs.currentMessage.Buf.Bytes())
+		buf := make([]byte, 4)
+		cs.currentMessage.Buf.Peek(buf)
+		tmpChunkSize = binary.BigEndian.Uint32(buf)
 	}
 
 	n64, err := io.CopyN(w, cs.currentMessage.Buf, int64(remain))

@@ -1,7 +1,6 @@
 package rtmp
 
 import (
-	"bytes"
 	"github.com/thelazyfox/gortmp/log"
 )
 
@@ -64,7 +63,7 @@ func (mp *mediaPlayer) writeTag(tag *FlvTag) {
 		AbsoluteTimestamp: tag.Timestamp,
 		Timestamp:         tag.Timestamp,
 		Size:              tag.Size,
-		Buf:               bytes.NewBuffer(tag.Bytes),
+		Buf:               tag.Buf,
 	})
 }
 

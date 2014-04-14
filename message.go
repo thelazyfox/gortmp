@@ -2,10 +2,6 @@
 
 package rtmp
 
-import (
-	"bytes"
-)
-
 // Message
 //
 // The different types of messages that are exchanged between the server
@@ -18,7 +14,7 @@ type Message struct {
 	Size              uint32
 	Type              uint8
 	StreamID          uint32
-	Buf               *bytes.Buffer
+	Buf               DynamicBuffer
 	IsInbound         bool
 	AbsoluteTimestamp uint32
 }
@@ -30,7 +26,7 @@ func NewMessage(csi uint32, t uint8, sid uint32, ts uint32, data []byte) *Messag
 		StreamID:          sid,
 		Timestamp:         ts,
 		AbsoluteTimestamp: ts,
-		Buf:               new(bytes.Buffer),
+		Buf:               NewDynamicBuffer(),
 	}
 	if data != nil {
 		message.Buf.Write(data)

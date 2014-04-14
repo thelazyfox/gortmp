@@ -1,7 +1,6 @@
 package rtmp
 
 import (
-	"bytes"
 	"fmt"
 )
 
@@ -67,7 +66,7 @@ func (s *stream) Send(msg *Message) error {
 }
 
 func (s *stream) SendCommand(cmd *Command) error {
-	buf := new(bytes.Buffer)
+	buf := NewDynamicBuffer()
 	err := cmd.Write(buf)
 	if err != nil {
 		return err

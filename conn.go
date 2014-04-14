@@ -1,7 +1,6 @@
 package rtmp
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"github.com/thelazyfox/goamf"
@@ -81,7 +80,7 @@ func (c *conn) Send(msg *Message) error {
 }
 
 func (c *conn) SendCommand(cmd *Command) error {
-	buf := new(bytes.Buffer)
+	buf := NewDynamicBuffer()
 	err := cmd.Write(buf)
 	if err != nil {
 		return err
@@ -148,7 +147,7 @@ func (c *conn) Close() {
 }
 
 func (c *conn) SendStreamBegin(streamId uint32) {
-	buf := new(bytes.Buffer)
+	buf := NewDynamicBuffer()
 
 	err := binary.Write(buf, binary.BigEndian, EVENT_STREAM_BEGIN)
 	if err != nil {

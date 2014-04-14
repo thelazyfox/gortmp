@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	_ "net/http/pprof"
+	_ "expvar"
 	"time"
 )
 

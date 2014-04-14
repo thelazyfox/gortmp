@@ -1,7 +1,6 @@
 package rtmp
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -70,9 +69,13 @@ func (csr *chunkStreamReader) handleMessage(msg *Message) {
 	if msg.ChunkStreamID == CS_ID_PROTOCOL_CONTROL {
 		switch msg.Type {
 		case SET_CHUNK_SIZE:
-			csr.chunkSize = binary.BigEndian.Uint32(msg.Buf.Bytes())
+			buf := make([]byte, 4)
+			msg.Buf.Peek(buf)
+			csr.chunkSize = binary.BigEndian.Uint32(buf)
 		case WINDOW_ACKNOWLEDGEMENT_SIZE:
-			csr.windowSize = binary.BigEndian.Uint32(msg.Buf.Bytes())
+			buf := make([]byte, 4)
+			msg.Buf.Peek(buf)
+			csr.windowSize = binary.BigEndian.Uint32(buf)
 		case ABORT_MESSAGE:
 			// not supported
 		}
@@ -153,7 +156,7 @@ func (csr *chunkStreamReader) readChunk(r Reader) (int64, error) {
 			Timestamp:         header.RealTimestamp(),
 			Size:              header.MessageLength,
 			StreamID:          header.MessageStreamID,
-			Buf:               bytes.NewBuffer(make([]byte, 0, header.MessageLength)),
+			Buf:               NewDynamicBuffer(),
 			IsInbound:         true,
 			AbsoluteTimestamp: absoluteTimestamp,
 		}

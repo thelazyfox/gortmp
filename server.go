@@ -319,7 +319,7 @@ func (ss *serverStreamHandler) OnReceive(stream Stream, msg *Message) {
 				Type:      msg.Type,
 				Timestamp: msg.AbsoluteTimestamp,
 				Size:      msg.Size,
-				Bytes:     msg.Buf.Bytes(),
+				Buf:       msg.Buf,
 			}
 
 			ss.mediaStream.Publish(tag)
