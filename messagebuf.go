@@ -154,7 +154,7 @@ func (sb *staticBuffer) ReadFrom(r io.Reader) (int64, error) {
 	sb.woff += n
 
 	if err == io.EOF {
-		return int64(n), nil
+		return int64(n), err
 	} else if sb.woff == len(sb.bytes) {
 		return int64(n), io.ErrShortWrite
 	} else {
@@ -292,6 +292,8 @@ func (db *dynamicBuffer) ReadFrom(r io.Reader) (int64, error) {
 		if err == io.ErrShortWrite {
 			db.buffers.PushBack(pool.Alloc())
 			e = db.buffers.Back()
+		} else if err == io.EOF {
+			return written, nil
 		} else {
 			return written, err
 		}
