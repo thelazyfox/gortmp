@@ -198,7 +198,7 @@ func (ms *mediaStream) loop() {
 					sub <- tag.Clone()
 				}
 			}
-			tag.Buf.Close()
+			GlobalBufferPool.Free(tag.Buf)
 		case sub := <-ms.sub:
 			subs[sub] = false
 			if dataHeader != nil {

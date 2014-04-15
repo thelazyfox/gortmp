@@ -80,7 +80,7 @@ func (c *conn) Send(msg *Message) error {
 }
 
 func (c *conn) SendCommand(cmd *Command) error {
-	buf := NewDynamicBuffer()
+	buf := GlobalBufferPool.Alloc()
 	err := cmd.Write(buf)
 	if err != nil {
 		return err
@@ -147,7 +147,7 @@ func (c *conn) Close() {
 }
 
 func (c *conn) SendStreamBegin(streamId uint32) {
-	buf := NewDynamicBuffer()
+	buf := GlobalBufferPool.Alloc()
 
 	err := binary.Write(buf, binary.BigEndian, EVENT_STREAM_BEGIN)
 	if err != nil {
@@ -510,9 +510,9 @@ func (c *conn) readFrom() {
 func (c *conn) writeTo() {
 	n, err := c.chunkStream.WriteTo(c.netConn)
 	if err == nil {
-		log.Debug("readLoop ended after %d bytes", n)
+		log.Debug("writeLoop ended after %d bytes", n)
 	} else {
-		log.Debug("readLoop ended after %d bytes with err %s", n, err)
+		log.Debug("writeLoop ended after %d bytes with err %s", n, err)
 	}
 	c.writeDone <- true
 }

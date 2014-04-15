@@ -69,13 +69,9 @@ func (csr *chunkStreamReader) handleMessage(msg *Message) {
 	if msg.ChunkStreamID == CS_ID_PROTOCOL_CONTROL {
 		switch msg.Type {
 		case SET_CHUNK_SIZE:
-			buf := make([]byte, 4)
-			msg.Buf.Peek(buf)
-			csr.chunkSize = binary.BigEndian.Uint32(buf)
+			csr.chunkSize = binary.BigEndian.Uint32(msg.Buf.Bytes()[0:4])
 		case WINDOW_ACKNOWLEDGEMENT_SIZE:
-			buf := make([]byte, 4)
-			msg.Buf.Peek(buf)
-			csr.windowSize = binary.BigEndian.Uint32(buf)
+			csr.windowSize = binary.BigEndian.Uint32(msg.Buf.Bytes()[0:4])
 		case ABORT_MESSAGE:
 			// not supported
 		}
@@ -83,7 +79,7 @@ func (csr *chunkStreamReader) handleMessage(msg *Message) {
 
 	csr.handler.OnMessage(msg)
 	if msg.Buf != nil {
-		msg.Buf.Close()
+		GlobalBufferPool.Free(msg.Buf)
 	}
 }
 
@@ -159,7 +155,7 @@ func (csr *chunkStreamReader) readChunk(r Reader) (int64, error) {
 			Timestamp:         header.RealTimestamp(),
 			Size:              header.MessageLength,
 			StreamID:          header.MessageStreamID,
-			Buf:               NewDynamicBuffer(),
+			Buf:               GlobalBufferPool.Alloc(),
 			IsInbound:         true,
 			AbsoluteTimestamp: absoluteTimestamp,
 		}

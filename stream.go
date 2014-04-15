@@ -66,7 +66,7 @@ func (s *stream) Send(msg *Message) error {
 }
 
 func (s *stream) SendCommand(cmd *Command) error {
-	buf := NewDynamicBuffer()
+	buf := GlobalBufferPool.Alloc()
 	err := cmd.Write(buf)
 	if err != nil {
 		return err

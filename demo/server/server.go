@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"github.com/thelazyfox/gortmp"
 	"github.com/thelazyfox/gortmp/log"
+	"os"
 	// "github.com/zhangpeihao/goflv"
+	golog "log"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
@@ -165,7 +167,7 @@ func TrackStarvation(streamName string, ms rtmp.MediaStream) {
 				if tag.Type == rtmp.VIDEO_TYPE {
 					curTs = int64(tag.Timestamp)
 				}
-				tag.Buf.Close()
+				rtmp.GlobalBufferPool.Free(tag.Buf)
 			} else {
 				return
 			}
@@ -201,6 +203,7 @@ func TrackStarvation(streamName string, ms rtmp.MediaStream) {
 func main() {
 	flag.Parse()
 	log.SetLogLevel(log.DEBUG)
+	golog.SetOutput(os.Stdout)
 
 	go func() {
 		fmt.Println(http.ListenAndServe(":6060", nil))

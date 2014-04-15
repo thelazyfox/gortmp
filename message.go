@@ -2,6 +2,10 @@
 
 package rtmp
 
+import (
+	"bytes"
+)
+
 // Message
 //
 // The different types of messages that are exchanged between the server
@@ -14,31 +18,9 @@ type Message struct {
 	Size              uint32
 	Type              uint8
 	StreamID          uint32
-	Buf               DynamicBuffer
+	Buf               *bytes.Buffer
 	IsInbound         bool
 	AbsoluteTimestamp uint32
-}
-
-func NewMessage(csi uint32, t uint8, sid uint32, ts uint32, data []byte) *Message {
-	message := &Message{
-		ChunkStreamID:     csi,
-		Type:              t,
-		StreamID:          sid,
-		Timestamp:         ts,
-		AbsoluteTimestamp: ts,
-		Buf:               NewDynamicBuffer(),
-	}
-	if data != nil {
-		message.Buf.Write(data)
-		message.Size = uint32(len(data))
-	}
-	return message
-}
-
-func (message *Message) Dump(name string) {
-	// logger.ModulePrintf(logHandler, log.LOG_LEVEL_DEBUG,
-	// 	"Message(%s){CID: %d, Type: %d, Timestamp: %d, Size: %d, StreamID: %d, IsInbound: %t, AbsoluteTimestamp: %d}\n", name,
-	// 	message.ChunkStreamID, message.Type, message.Timestamp, message.Size, message.StreamID, message.IsInbound, message.AbsoluteTimestamp)
 }
 
 // The length of remain data to read

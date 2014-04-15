@@ -32,7 +32,7 @@ func NewChunkStream(handler ChunkStreamHandler) ChunkStream {
 }
 
 func (cs *chunkStream) SendSetPeerBandwidth(bw uint32, limit uint8) error {
-	buf := NewDynamicBuffer()
+	buf := GlobalBufferPool.Alloc()
 
 	err := binary.Write(buf, binary.BigEndian, bw)
 	if err != nil {
@@ -57,7 +57,7 @@ func (cs *chunkStream) SendSetPeerBandwidth(bw uint32, limit uint8) error {
 }
 
 func (cs *chunkStream) SendSetWindowSize(size uint32) error {
-	buf := NewDynamicBuffer()
+	buf := GlobalBufferPool.Alloc()
 	err := binary.Write(buf, binary.BigEndian, size)
 
 	if err != nil {
@@ -77,7 +77,7 @@ func (cs *chunkStream) SendSetWindowSize(size uint32) error {
 }
 
 func (cs *chunkStream) SendSetChunkSize(chunkSize uint32) error {
-	buf := NewDynamicBuffer()
+	buf := GlobalBufferPool.Alloc()
 	err := binary.Write(buf, binary.BigEndian, &chunkSize)
 
 	if err != nil {
@@ -97,7 +97,7 @@ func (cs *chunkStream) SendSetChunkSize(chunkSize uint32) error {
 }
 
 func (cs *chunkStream) SendAcknowledgement(inCount uint32) error {
-	buf := NewDynamicBuffer()
+	buf := GlobalBufferPool.Alloc()
 	err := binary.Write(buf, binary.BigEndian, inCount)
 
 	if err != nil {
@@ -117,7 +117,7 @@ func (cs *chunkStream) SendAcknowledgement(inCount uint32) error {
 }
 
 func (cs *chunkStream) sendWindowAcknowledgementSize(cnt uint32) error {
-	buf := NewDynamicBuffer()
+	buf := GlobalBufferPool.Alloc()
 	err := binary.Write(buf, binary.BigEndian, cnt)
 
 	if err != nil {

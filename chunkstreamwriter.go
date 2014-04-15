@@ -157,6 +157,7 @@ func (csw *chunkStreamWriter) Send(msg *Message) error {
 	case cs.messageQueue <- messageWriter(writer):
 		select {
 		case err := <-done:
+			GlobalBufferPool.Free(msg.Buf)
 			return err
 		}
 	case <-csw.done:
@@ -182,9 +183,7 @@ func (csw *chunkStreamWriter) writeMessage(w Writer, msg *Message, cs *outChunkS
 
 func (csw *chunkStreamWriter) checkSetChunkSize(msg *Message) {
 	if msg.ChunkStreamID == CS_ID_PROTOCOL_CONTROL && msg.Type == SET_CHUNK_SIZE {
-		buf := make([]byte, 4)
-		msg.Buf.Peek(buf)
-		csw.chunkSize = binary.BigEndian.Uint32(buf)
+		csw.chunkSize = binary.BigEndian.Uint32(msg.Buf.Bytes()[0:4])
 	}
 }
 
@@ -218,9 +217,7 @@ func (csw *chunkStreamWriter) writeChunk(w Writer, cs *outChunkStream) (int64, e
 	var tmpChunkSize uint32
 
 	if cs.currentMessage.Type == SET_CHUNK_SIZE {
-		buf := make([]byte, 4)
-		cs.currentMessage.Buf.Peek(buf)
-		tmpChunkSize = binary.BigEndian.Uint32(buf)
+		tmpChunkSize = binary.BigEndian.Uint32(cs.currentMessage.Buf.Bytes()[0:4])
 	}
 
 	n64, err := io.CopyN(w, cs.currentMessage.Buf, int64(remain))
