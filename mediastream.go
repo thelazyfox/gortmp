@@ -2,7 +2,6 @@ package rtmp
 
 import (
 	"errors"
-	"github.com/thelazyfox/gortmp/log"
 	"math"
 	"sync"
 )
@@ -126,8 +125,6 @@ func (ms *mediaStream) updateBps(ts int64) {
 	audioBps := float64(audioBytes-ms.lastAudioBytes) / tsDelta * 1000
 	bps := float64(bytes-ms.lastBytes) / tsDelta * 1000
 
-	log.Debug("updateBps: %f %f %f", videoBps, audioBps, bps)
-
 	ms.lastVideoBytes = videoBytes
 	ms.lastAudioBytes = audioBytes
 	ms.lastBytes = bytes
@@ -136,8 +133,6 @@ func (ms *mediaStream) updateBps(ts int64) {
 	ms.videoBps.Set(ms.toInt(videoBps))
 	ms.audioBps.Set(ms.toInt(audioBps))
 	ms.bps.Set(ms.toInt(bps))
-
-	log.Debug("updateBps setting stats: %#v", ms.Stats())
 }
 
 func (ms *mediaStream) loop() {
