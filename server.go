@@ -5,16 +5,40 @@ import (
 	"github.com/thelazyfox/goamf"
 	"github.com/thelazyfox/gortmp/log"
 	"net"
+	"time"
 )
+
+type ServerStats struct {
+	Connections int64
+
+	HandshakeFailures int64
+
+	BytesIn  int64
+	BytesOut int64
+
+	BytesInRate  int64
+	BytesOutRate int64
+}
 
 type Server interface {
 	Serve(net.Listener) error
 	GetMediaStream(string) MediaStream
+
+	Stats() ServerStats
 }
 
 type server struct {
 	handler ServerHandler
 	streams MediaStreamMap
+
+	connections    Counter
+	handshakeFails Counter
+
+	bytesIn  Counter
+	bytesOut Counter
+
+	bpsIn  Counter
+	bpsOut Counter
 }
 
 type ServerHandler interface {
@@ -39,6 +63,42 @@ func NewServer(handler ServerHandler) Server {
 }
 
 func (s *server) Serve(ln net.Listener) error {
+	// Calculates bpsIn/bpsOut once per second
+	ticker := time.NewTicker(time.Second)
+	tickerDone := make(chan bool)
+
+	defer ticker.Stop()
+	defer close(tickerDone)
+
+	// not perfect, but probably close enough
+	go func() {
+		var lastIn int64
+		var lastOut int64
+		var lastTick time.Time
+
+		for {
+			select {
+			case tick := <-ticker.C:
+				if lastTick.IsZero() {
+					lastTick = tick
+					continue
+				}
+
+				delta := tick.Sub(lastTick).Seconds()
+
+				s.bpsIn.Set(int64(float64(s.bytesIn.Get()-lastIn) / delta))
+				lastIn = s.bytesIn.Get()
+
+				s.bpsOut.Set(int64(float64(s.bytesOut.Get()-lastOut) / delta))
+				lastOut = s.bytesOut.Get()
+
+				lastTick = tick
+			case <-tickerDone:
+				return
+			}
+		}
+	}()
+
 	for {
 		conn, err := ln.Accept()
 
@@ -54,11 +114,25 @@ func (s *server) GetMediaStream(name string) MediaStream {
 	return s.streams.Get(name)
 }
 
+func (s *server) Stats() ServerStats {
+	return ServerStats{
+		Connections:       s.connections.Get(),
+		HandshakeFailures: s.handshakeFails.Get(),
+		BytesIn:           s.bytesIn.Get(),
+		BytesOut:          s.bytesOut.Get(),
+		BytesInRate:       s.bpsIn.Get(),
+		BytesOutRate:      s.bpsOut.Get(),
+	}
+}
+
 func (s *server) handle(conn net.Conn) {
-	netConn := NewNetConn(conn)
+	s.connections.Add(1)
+	netConn := NewNetConn(conn, &s.bytesIn, &s.bytesOut)
 
 	err := SHandshake(netConn)
 	if err != nil {
+		s.handshakeFails.Add(1)
+		s.connections.Add(-1)
 		log.Error("Connection from %s failed handshake: %s", conn.RemoteAddr().String(), err)
 		netConn.Conn().Close()
 		return
@@ -146,6 +220,9 @@ func (sc *serverConnHandler) OnCreateStream(stream Stream) {
 }
 
 func (sc *serverConnHandler) OnClose(conn Conn) {
+	// should always run
+	defer sc.server.connections.Add(-1)
+
 	for stream, handler := range sc.streams {
 		if handler.mediaPlayer != nil {
 			handler.mediaPlayer.Close()

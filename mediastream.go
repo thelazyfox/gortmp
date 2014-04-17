@@ -3,6 +3,7 @@ package rtmp
 import (
 	"errors"
 	"sync"
+	"time"
 )
 
 var (
@@ -48,18 +49,39 @@ func (m *mediaStreamMap) Del(name string) {
 	delete(m.m, name)
 }
 
+// All Measurements in kbps
+type MediaStreamStats struct {
+	VideoBytes int64
+	AudioBytes int64
+	Bytes      int64
+
+	VideoBytesRate int64
+	AudioBytesRate int64
+	BytesRate      int64
+}
+
 // MediaStream pubsub
 type MediaStream interface {
 	Publish(*FlvTag) error
 	Subscribe() (chan *FlvTag, error)
 	Unsubscribe(chan *FlvTag)
 	Close()
+
+	Stats() MediaStreamStats
 }
 
 type mediaStream struct {
 	pub   chan *FlvTag
 	sub   chan chan *FlvTag
 	unsub chan chan *FlvTag
+
+	videoBytes Counter
+	audioBytes Counter
+	bytes      Counter
+
+	videoBps Counter
+	audioBps Counter
+	bps      Counter
 
 	done     chan bool
 	doneOnce sync.Once
@@ -74,8 +96,44 @@ func NewMediaStream() MediaStream {
 	}
 
 	go ms.loop()
+	go ms.updateCounters()
 
 	return ms
+}
+
+func (ms *mediaStream) updateCounters() {
+	ticker := time.NewTicker(time.Second)
+	var lastVideoBytes int64
+	var lastAudioBytes int64
+	var lastBytes int64
+	var lastTick time.Time
+
+	defer ticker.Stop()
+
+	for {
+		select {
+		case tick := <-ticker.C:
+			if lastTick.IsZero() {
+				lastTick = tick
+				continue
+			}
+
+			delta := tick.Sub(lastTick).Seconds()
+
+			ms.videoBps.Set(int64(float64(ms.videoBytes.Get()-lastVideoBytes) / delta))
+			lastVideoBytes = ms.videoBytes.Get()
+
+			ms.audioBps.Set(int64(float64(ms.audioBytes.Get()-lastAudioBytes) / delta))
+			lastAudioBytes = ms.audioBytes.Get()
+
+			ms.bps.Set(int64(float64(ms.bytes.Get()-lastBytes) / delta))
+			lastBytes = ms.bytes.Get()
+
+			lastTick = tick
+		case <-ms.done:
+			return
+		}
+	}
 }
 
 func (ms *mediaStream) loop() {
@@ -92,9 +150,11 @@ func (ms *mediaStream) loop() {
 	for {
 		select {
 		case tag := <-ms.pub:
+			ms.bytes.Add(int64(tag.Size))
 			// store the sequence headers if necesary
 			switch tag.Type {
 			case AUDIO_TYPE:
+				ms.audioBytes.Add(int64(tag.Size))
 				if audioHeader != nil {
 					break
 				}
@@ -103,6 +163,7 @@ func (ms *mediaStream) loop() {
 					audioHeader = tag
 				}
 			case VIDEO_TYPE:
+				ms.videoBytes.Add(int64(tag.Size))
 				if videoHeader != nil {
 					break
 				}
@@ -186,4 +247,15 @@ func (ms *mediaStream) Close() {
 	ms.doneOnce.Do(func() {
 		close(ms.done)
 	})
+}
+
+func (ms *mediaStream) Stats() MediaStreamStats {
+	return MediaStreamStats{
+		VideoBytes:     ms.videoBytes.Get(),
+		AudioBytes:     ms.audioBytes.Get(),
+		Bytes:          ms.bytes.Get(),
+		VideoBytesRate: ms.videoBps.Get(),
+		AudioBytesRate: ms.audioBps.Get(),
+		BytesRate:      ms.bps.Get(),
+	}
 }

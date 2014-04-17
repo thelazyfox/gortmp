@@ -18,15 +18,32 @@ type NetConn interface {
 
 type netConn struct {
 	conn net.Conn
+
 	*bufio.Reader
 	*bufio.Writer
 
 	maxIdle time.Duration
 }
 
-func NewNetConn(conn net.Conn) NetConn {
+type netCounter struct {
+	net.Conn
+	inCounter  *Counter
+	outCounter *Counter
+}
+
+func (nc *netCounter) Read(b []byte) (int, error) {
+	n, err := nc.Conn.Read(b)
+	nc.inCounter.Add(int64(n))
+	return n, err
+}
+
+func NewNetConn(conn net.Conn, inCounter *Counter, outCounter *Counter) NetConn {
 	return &netConn{
-		conn:   conn,
+		conn: &netCounter{
+			Conn:       conn,
+			inCounter:  inCounter,
+			outCounter: outCounter,
+		},
 		Reader: bufio.NewReader(conn),
 		Writer: bufio.NewWriter(conn),
 	}
