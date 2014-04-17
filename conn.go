@@ -229,18 +229,21 @@ func (c *conn) OnMessage(msg *Message) {
 	log.Trace("%#v", *msg)
 	switch msg.Type {
 	case COMMAND_AMF3:
-		cmd, err := c.parseAmf3(msg)
+		cmd, err := c.parseAmf3(bytes.NewBuffer(msg.Buf.Bytes()), msg.StreamID)
 		if err != nil {
 			log.Warning("Invalid COMMAND_AMF3 message")
+			c.onReceive(msg)
+		} else {
+			c.invoke(cmd)
 		}
-		c.invoke(cmd)
 	case COMMAND_AMF0:
-		cmd, err := c.parseAmf0(msg, nil)
+		cmd, err := c.parseAmf0(bytes.NewBuffer(msg.Buf.Bytes()), msg.StreamID, nil)
 		if err != nil {
 			log.Warning("Invalid COMMAND_AMF0 message")
-			return
+			c.onReceive(msg)
+		} else {
+			c.invoke(cmd)
 		}
-		c.invoke(cmd)
 	default:
 		c.onReceive(msg)
 	}
@@ -414,39 +417,39 @@ func (c *conn) invoke(cmd *Command) {
 	}
 }
 
-func (c *conn) parseAmf3(msg *Message) (*Command, error) {
+func (c *conn) parseAmf3(buf *bytes.Buffer, streamid uint32) (*Command, error) {
 	cmd := &Command{IsFlex: true}
 
-	_, err := msg.Buf.ReadByte()
+	_, err := buf.ReadByte()
 	if err != nil {
 		log.Debug("parseAmf3 error")
 		return nil, err
 	}
 
-	return c.parseAmf0(msg, cmd)
+	return c.parseAmf0(buf, streamid, cmd)
 }
 
-func (c *conn) parseAmf0(msg *Message, cmd *Command) (*Command, error) {
+func (c *conn) parseAmf0(buf *bytes.Buffer, streamid uint32, cmd *Command) (*Command, error) {
 	if cmd == nil {
 		cmd = &Command{}
 	}
 
-	name, err := amf.ReadString(msg.Buf)
+	name, err := amf.ReadString(buf)
 	if err != nil {
 		log.Debug("parseAmf0 failed to read name")
 		return nil, err
 	}
 	cmd.Name = name
 
-	txnid, err := amf.ReadDouble(msg.Buf)
+	txnid, err := amf.ReadDouble(buf)
 	if err != nil {
 		log.Debug("parseAmf0 failed to read transaction id")
 		return nil, err
 	}
 	cmd.TransactionID = uint32(txnid)
 
-	for msg.Buf.Len() > 0 {
-		object, err := amf.ReadValue(msg.Buf)
+	for buf.Len() > 0 {
+		object, err := amf.ReadValue(buf)
 		if err != nil {
 			log.Debug("parseAmf0 failed to read amf object")
 			return nil, err
@@ -454,7 +457,7 @@ func (c *conn) parseAmf0(msg *Message, cmd *Command) (*Command, error) {
 		cmd.Objects = append(cmd.Objects, object)
 	}
 
-	cmd.StreamID = msg.StreamID
+	cmd.StreamID = streamid
 
 	return cmd, nil
 }
