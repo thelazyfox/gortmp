@@ -2,6 +2,8 @@ package rtmp
 
 import (
 	"errors"
+	"github.com/thelazyfox/gortmp/log"
+	"math"
 	"sync"
 )
 
@@ -104,6 +106,14 @@ func NewMediaStream() MediaStream {
 	return ms
 }
 
+func (ms *mediaStream) toInt(f float64) int64 {
+	if math.IsInf(f, 0) || math.IsNaN(f) {
+		return 0
+	} else {
+		return int64(f)
+	}
+}
+
 func (ms *mediaStream) updateBps(ts int64) {
 	tsDelta := float64(ts - ms.lastTs)
 
@@ -112,18 +122,22 @@ func (ms *mediaStream) updateBps(ts int64) {
 	audioBytes := ms.audioBytes.Get()
 	bytes := ms.bytes.Get()
 
-	videoBps := float64(videoBytes-ms.lastVideoBytes) / tsDelta / 1000
-	audioBps := float64(audioBytes-ms.lastAudioBytes) / tsDelta / 1000
-	bps := float64(bytes-ms.lastBytes) / tsDelta / 1000
+	videoBps := float64(videoBytes-ms.lastVideoBytes) / tsDelta * 1000
+	audioBps := float64(audioBytes-ms.lastAudioBytes) / tsDelta * 1000
+	bps := float64(bytes-ms.lastBytes) / tsDelta * 1000
+
+	log.Debug("updateBps: %f %f %f", videoBps, audioBps, bps)
 
 	ms.lastVideoBytes = videoBytes
 	ms.lastAudioBytes = audioBytes
 	ms.lastBytes = bytes
 	ms.lastTs = ts
 
-	ms.videoBps.Set(int64(videoBps))
-	ms.audioBps.Set(int64(audioBps))
-	ms.bps.Set(int64(bps))
+	ms.videoBps.Set(ms.toInt(videoBps))
+	ms.audioBps.Set(ms.toInt(audioBps))
+	ms.bps.Set(ms.toInt(bps))
+
+	log.Debug("updateBps setting stats: %#v", ms.Stats())
 }
 
 func (ms *mediaStream) loop() {
@@ -247,7 +261,12 @@ func (ms *mediaStream) Close() {
 
 func (ms *mediaStream) Stats() MediaStreamStats {
 	return MediaStreamStats{
-		Bytes:     ms.bytes.Get(),
-		BytesRate: ms.bps.Get(),
+		VideoBytes: ms.videoBytes.Get(),
+		AudioBytes: ms.audioBytes.Get(),
+		Bytes:      ms.bytes.Get(),
+
+		VideoBytesRate: ms.videoBps.Get(),
+		AudioBytesRate: ms.audioBps.Get(),
+		BytesRate:      ms.bps.Get(),
 	}
 }
