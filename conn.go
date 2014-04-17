@@ -232,6 +232,10 @@ func (c *conn) OnMessage(msg *Message) {
 		cmd, err := c.parseAmf3(bytes.NewBuffer(msg.Buf.Bytes()), msg.StreamID)
 		if err != nil {
 			log.Warning("Invalid COMMAND_AMF3 message")
+			buf := bytes.NewBuffer(msg.Buf.Bytes())
+			buf.ReadByte()
+			c.amfDump(buf)
+
 			c.onReceive(msg)
 		} else {
 			c.invoke(cmd)
@@ -240,6 +244,7 @@ func (c *conn) OnMessage(msg *Message) {
 		cmd, err := c.parseAmf0(bytes.NewBuffer(msg.Buf.Bytes()), msg.StreamID, nil)
 		if err != nil {
 			log.Warning("Invalid COMMAND_AMF0 message")
+			c.amfDump(bytes.NewBuffer(msg.Buf.Bytes()))
 			c.onReceive(msg)
 		} else {
 			c.invoke(cmd)
@@ -427,6 +432,19 @@ func (c *conn) parseAmf3(buf *bytes.Buffer, streamid uint32) (*Command, error) {
 	}
 
 	return c.parseAmf0(buf, streamid, cmd)
+}
+
+func (c *conn) amfDump(buf *bytes.Buffer) {
+	i := 0
+	for buf.Len() > 0 {
+		object, err := amf.ReadValue(buf)
+		if err != nil {
+			log.Debug("amfDump failed to read amf object")
+			return
+		}
+		log.Debug("conn.amfDump: %d - %#v", i, object)
+		i += 1
+	}
 }
 
 func (c *conn) parseAmf0(buf *bytes.Buffer, streamid uint32, cmd *Command) (*Command, error) {
