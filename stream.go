@@ -177,7 +177,7 @@ func (s *stream) invokePlay(cmd *Command) error {
 		return ErrPlayFailed(err)
 	}
 
-	err = s.conn.SendCommand(&Command{
+	err = s.SendCommand(&Command{
 		Name:          "onStatus",
 		TransactionID: 0,
 		Objects: []interface{}{
@@ -193,7 +193,7 @@ func (s *stream) invokePlay(cmd *Command) error {
 		return err
 	}
 
-	err = s.conn.SendCommand(&Command{
+	err = s.SendCommand(&Command{
 		Name:          "onStatus",
 		TransactionID: 0,
 		Objects: []interface{}{
