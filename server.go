@@ -284,8 +284,11 @@ func (ss *serverStreamHandler) OnPlay(stream Stream) {
 				stream.Conn().Close()
 			}()
 		}
+	} else if ss.mediaPlayer != nil {
+		log.Warning("multiple play requests detected")
+		return
 	} else {
-		stream.Conn().Error(fmt.Errorf("play failed"))
+		stream.Conn().Error(fmt.Errorf("stream not found"))
 		return
 	}
 
