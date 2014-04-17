@@ -31,21 +31,33 @@ type netCounter struct {
 	outCounter *Counter
 }
 
+type NetCounter interface {
+	net.Conn
+}
+
 func (nc *netCounter) Read(b []byte) (int, error) {
 	n, err := nc.Conn.Read(b)
 	nc.inCounter.Add(int64(n))
 	return n, err
 }
 
+func (nc *netCounter) Write(b []byte) (int, error) {
+	n, err := nc.Conn.Write(b)
+	nc.outCounter.Add(int64(n))
+	return n, err
+}
+
 func NewNetConn(conn net.Conn, inCounter *Counter, outCounter *Counter) NetConn {
+	netcounter := &netCounter{
+		Conn:       conn,
+		inCounter:  inCounter,
+		outCounter: outCounter,
+	}
+
 	return &netConn{
-		conn: &netCounter{
-			Conn:       conn,
-			inCounter:  inCounter,
-			outCounter: outCounter,
-		},
-		Reader: bufio.NewReader(conn),
-		Writer: bufio.NewWriter(conn),
+		conn:   netcounter,
+		Reader: bufio.NewReader(netcounter),
+		Writer: bufio.NewWriter(netcounter),
 	}
 }
 
