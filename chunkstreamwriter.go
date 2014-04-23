@@ -135,8 +135,6 @@ func (csw *chunkStreamWriter) WriteTo(w Writer) (int64, error) {
 			return outBytes, err
 		}
 	}
-
-	return outBytes, nil
 }
 
 func (csw *chunkStreamWriter) Send(msg *Message) error {

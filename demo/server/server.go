@@ -17,7 +17,7 @@ var (
 	listenAddr = flag.String("listen", ":1935", "The address to bind to")
 )
 
-func RecordStream(ms rtmp.MediaStream, filename string) {
+func RecordStream(ms rtmp.MediaStream, filebase string, maxSize, maxLen uint32) {
 	log.Info("RecordStream staring...")
 	mb, err := rtmp.NewMediaBuffer(ms, 4*1024*1024)
 
@@ -28,32 +28,117 @@ func RecordStream(ms rtmp.MediaStream, filename string) {
 
 	defer mb.Close()
 
+	filename := fmt.Sprintf("%s_%d.flv", filebase, time.Now().Unix())
 	out, err := flv.CreateFile(filename)
 	if err != nil {
 		log.Error("RecordStream failed to create file")
 		return
 	}
 
-	defer out.Close()
-	defer out.Sync()
+	var videoHeader, audioHeader *rtmp.FlvTag
+	var ts, offset, size uint32
 
 	for {
+		var isKeyframe bool
 		tag, err := mb.Get()
 		if err != nil {
-			log.Error("RecordStream failed to get tag: %s", err)
+			log.Error("RecordStream ending due to %s", err)
+			out.Sync()
+			out.Close()
 			return
 		}
 
-		switch tag.Type {
-		case rtmp.VIDEO_TYPE:
-			fallthrough
-		case rtmp.AUDIO_TYPE:
-			err = out.WriteTag(tag.Bytes, tag.Type, tag.Timestamp)
-			if err != nil {
-				log.Error("RecordStream failed to write tag: %s", err)
-				return
+		// save the sequence headers
+		if tag.Type == rtmp.VIDEO_TYPE {
+			header := tag.GetVideoHeader()
+			if videoHeader == nil {
+				if header.FrameType == 1 && header.CodecID == 7 && header.AVCPacketType == 0 {
+					videoHeader = tag
+				}
+			}
+
+			isKeyframe = header.FrameType == 1
+		} else if tag.Type == rtmp.AUDIO_TYPE {
+			header := tag.GetAudioHeader()
+			if audioHeader == nil {
+				if header.SoundFormat == 10 && header.AACPacketType == 0 {
+					audioHeader = tag
+				}
 			}
 		}
+
+		if offset > tag.Timestamp {
+			ts = 0
+		} else {
+			ts = tag.Timestamp - offset
+		}
+
+		// try to do a soft cut
+		if isKeyframe {
+			if size > maxSize/20*19 || ts > maxLen/20*19 {
+				filename = fmt.Sprintf("%s_%d.flv", filebase, time.Now().Unix())
+				log.Debug("Splitting new file %s, previous file size=%d,len=%d", filename, size, ts)
+				out.Sync()
+				out.Close()
+				out, err = flv.CreateFile(filename)
+				if err != nil {
+					log.Error("RecordStream failed to create output file: %s", err)
+					return
+				}
+
+				size = 0
+				ts = 0
+				offset = tag.Timestamp
+
+				if videoHeader != nil {
+					out.WriteTag(videoHeader.Bytes, videoHeader.Type, 0)
+					size += videoHeader.Size
+				}
+
+				if audioHeader != nil {
+					out.WriteTag(audioHeader.Bytes, audioHeader.Type, 0)
+					size += audioHeader.Size
+				}
+			}
+		}
+
+		// hard cut
+		if size > maxSize || ts > maxLen {
+			filename = fmt.Sprintf("%s_%d.flv", filebase, time.Now().Unix())
+			log.Debug("Splitting new file %s, previous file size=%d,len=%d", filename, size, ts)
+			out.Sync()
+			out.Close()
+			out, err = flv.CreateFile(filename)
+			if err != nil {
+				log.Error("RecordStream failed to create output file: %s", err)
+				return
+			}
+
+			size = 0
+			ts = 0
+			offset = tag.Timestamp
+
+			if videoHeader != nil {
+				out.WriteTag(videoHeader.Bytes, videoHeader.Type, 0)
+				size += videoHeader.Size
+
+			}
+
+			if audioHeader != nil {
+				out.WriteTag(audioHeader.Bytes, audioHeader.Type, 0)
+				size += audioHeader.Size
+			}
+		}
+
+		err = out.WriteTag(tag.Bytes, tag.Type, ts)
+		if err != nil {
+			log.Error("RecordStream write tag failed: %s", err)
+			out.Sync()
+			out.Close()
+			return
+		}
+
+		size += tag.Size
 	}
 }
 
@@ -162,6 +247,7 @@ func (h *handler) OnPlay(rtmp.Stream) {
 func (h *handler) OnPublish(stream rtmp.Stream) {
 	// go RecordStream(h.server.GetMediaStream(stream.Name()), "out.flv")
 	go TrackStarvation(stream.Name(), h.server.GetMediaStream(stream.Name()))
+	go RecordStream(h.server.GetMediaStream(stream.Name()), stream.Name(), 25*1024*1024, 60*1000)
 	fmt.Printf("OnPublish\n")
 }
 
