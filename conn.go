@@ -1,6 +1,7 @@
 package rtmp
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"github.com/thelazyfox/goamf"
