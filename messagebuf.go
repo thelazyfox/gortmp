@@ -3,7 +3,6 @@ package rtmp
 import (
 	"bytes"
 	"container/list"
-	"github.com/thelazyfox/gortmp/log"
 	"sync"
 )
 

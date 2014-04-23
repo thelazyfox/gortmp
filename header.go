@@ -5,7 +5,6 @@ package rtmp
 import (
 	"encoding/binary"
 	"errors"
-	"github.com/thelazyfox/gortmp/log"
 	"io"
 )
 

@@ -2,7 +2,6 @@ package rtmp
 
 import (
 	"container/list"
-	"github.com/thelazyfox/gortmp/log"
 )
 
 type MediaBuffer interface {

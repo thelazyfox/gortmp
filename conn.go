@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/thelazyfox/goamf"
 	"github.com/thelazyfox/gortmp/log"
-	"io"
 	"net"
 )
 
