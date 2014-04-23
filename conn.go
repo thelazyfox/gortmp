@@ -226,7 +226,6 @@ func (c *conn) SetPeerBandwidth(size uint32, limit uint8) {
 }
 
 func (c *conn) OnMessage(msg *Message) {
-	log.Trace("%#v", *msg)
 	switch msg.Type {
 	case COMMAND_AMF3:
 		cmd, err := c.parseAmf3(bytes.NewBuffer(msg.Buf.Bytes()), msg.StreamID)
@@ -338,11 +337,9 @@ func (c *conn) invokeConnect(cmd *Command) error {
 }
 
 func (c *conn) invokeCreateStream(cmd *Command) error {
-	log.Trace("invokeCreateStream: %#v", *cmd)
-
 	csid, err := c.chunkStream.CreateChunkStream(LowPriority)
 	if err != nil {
-		log.Debug("failed to create chunk stream: %s", err)
+		log.Error("failed to create chunk stream: %s", err)
 		return err
 	}
 
@@ -356,7 +353,7 @@ func (c *conn) invokeCreateStream(cmd *Command) error {
 	})
 
 	if err != nil {
-		log.Debug("invokeCreateStream error: %s", err)
+		log.Error("invokeCreateStream error: %s", err)
 		return err
 	}
 
@@ -500,10 +497,10 @@ func (c *conn) waitClose() {
 
 func (c *conn) readFrom() {
 	n, err := c.chunkStream.ReadFrom(c.netConn)
-	if err == nil || err == io.EOF {
-		log.Debug("readLoop ended after %d bytes", n)
+	if err == nil {
+		log.Info("readLoop ended after %d bytes", n)
 	} else {
-		log.Debug("readLoop ended after %d bytes with err %s", n, err)
+		log.Info("readLoop ended after %d bytes with err %s", n, err)
 	}
 	c.readDone <- true
 }
@@ -511,9 +508,9 @@ func (c *conn) readFrom() {
 func (c *conn) writeTo() {
 	n, err := c.chunkStream.WriteTo(c.netConn)
 	if err == nil {
-		log.Debug("writeLoop ended after %d bytes", n)
+		log.Info("writeLoop ended after %d bytes", n)
 	} else {
-		log.Debug("writeLoop ended after %d bytes with err %s", n, err)
+		log.Info("writeLoop ended after %d bytes with err %s", n, err)
 	}
 	c.writeDone <- true
 }

@@ -91,7 +91,6 @@ func NewSniffer(r io.Reader, tag string) Sniffer {
 
 	go io.Copy(ioutil.Discard, a)
 
-	log.Trace("Creating chunk stream reader")
 	chunkStreamReader := rtmp.NewChunkStreamReader(RtmpLogger{tag})
 
 	go func() {

@@ -44,7 +44,6 @@ func (mb *mediaBuffer) MediaStream() MediaStream {
 
 func (mb *mediaBuffer) loop() {
 	defer func() {
-		log.Debug("MediaBuffer shutdown")
 		close(mb.out)
 	}()
 
@@ -77,7 +76,6 @@ func (mb *mediaBuffer) loop() {
 
 func (mb *mediaBuffer) push(tag *FlvTag) {
 	if mb.size+tag.Size > mb.maxSize {
-		log.Debug("MediaBuffer dropping frame")
 		GlobalBufferPool.Free(tag.Buf)
 	} else {
 		mb.size += tag.Size

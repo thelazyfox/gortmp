@@ -143,7 +143,6 @@ func SHandshake(conn NetConn) error {
 	if _, err := io.ReadFull(conn, c1); err != nil {
 		return err
 	}
-	log.Debug("SHandshake read c1")
 
 	response := make([]byte, 2*HANDSHAKE_SIZE+1)
 	s0 := response[0:1]
@@ -163,7 +162,6 @@ func SHandshake(conn NetConn) error {
 	if !ok {
 		log.Warning("SHandshake invalid flash client detected")
 	}
-	log.Debug("SHandshake validated scheme %d", scheme)
 
 	// prep output
 	binary.BigEndian.PutUint32(s1[4:8], 0x01020304)
@@ -215,7 +213,6 @@ func SHandshake(conn NetConn) error {
 		}
 
 		done <- nil
-		log.Debug("SHandshake response written")
 	}()
 
 	go func() {
@@ -231,8 +228,6 @@ func SHandshake(conn NetConn) error {
 	if err := <-done; err != nil {
 		return fmt.Errorf("SHandshake connection error: %s", err)
 	}
-
-	log.Debug("SHandshake Complete")
 
 	return nil
 }

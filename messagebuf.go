@@ -52,7 +52,6 @@ func (bp *bufferPool) loop() {
 func (bp *bufferPool) Alloc() *bytes.Buffer {
 	select {
 	case buf := <-bp.alloc:
-		log.Debug("alloc")
 		return buf
 	case <-bp.done:
 		return nil
@@ -62,7 +61,6 @@ func (bp *bufferPool) Alloc() *bytes.Buffer {
 func (bp *bufferPool) Free(buf *bytes.Buffer) {
 	select {
 	case bp.free <- buf:
-		log.Debug("free")
 	case <-bp.done:
 	}
 }
