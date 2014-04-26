@@ -516,9 +516,9 @@ func (c *conn) readFrom() {
 func (c *conn) writeTo() {
 	n, err := c.chunkStream.WriteTo(c.netConn)
 	if err == nil {
-		log.Debug("readLoop ended after %d bytes", n)
+		log.Debug("writeLoop ended after %d bytes", n)
 	} else {
-		log.Debug("readLoop ended after %d bytes with err %s", n, err)
+		log.Debug("writeLoop ended after %d bytes with err %s", n, err)
 	}
 	c.writeDone <- true
 }
