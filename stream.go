@@ -9,6 +9,8 @@ type Stream interface {
 	ID() uint32
 	Conn() Conn
 	Name() string
+	Publishing() bool
+	Playing() bool
 
 	Send(*Message) error
 	SendCommand(*Command) error
@@ -57,6 +59,14 @@ func (s *stream) Conn() Conn {
 
 func (s *stream) Name() string {
 	return s.name
+}
+
+func (s *stream) Playing() bool {
+	return s.playing
+}
+
+func (s *stream) Publishing() bool {
+	return s.publishing
 }
 
 func (s *stream) Send(msg *Message) error {
@@ -136,9 +146,6 @@ func (s *stream) invokePublish(cmd *Command) error {
 		return ErrPublishBadName(err)
 	}
 
-	s.name = streamName
-	s.publishing = true
-
 	err = s.conn.SendCommand(&Command{
 		Name:          "onStatus",
 		StreamID:      cmd.StreamID,
@@ -152,6 +159,9 @@ func (s *stream) invokePublish(cmd *Command) error {
 	if err != nil {
 		return err
 	}
+
+	s.name = streamName
+	s.publishing = true
 
 	if s.handler != nil {
 		s.handler.OnPublish(s)
@@ -210,7 +220,10 @@ func (s *stream) invokePlay(cmd *Command) error {
 	}
 
 	s.name = streamName
+	s.playing = true
 
-	s.handler.OnPlay(s)
+	if s.handler != nil {
+		s.handler.OnPlay(s)
+	}
 	return nil
 }
