@@ -5,6 +5,7 @@ import (
 	"github.com/thelazyfox/goamf"
 	"github.com/thelazyfox/gortmp/log"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -22,14 +23,22 @@ type ServerStats struct {
 
 type Server interface {
 	Serve(net.Listener) error
-	GetMediaStream(string) MediaStream
+
+	// access to the stream and player maps
+	MediaStream(string) MediaStream
+	MediaPlayer(Stream) MediaPlayer
 
 	Stats() ServerStats
 }
 
 type server struct {
 	handler ServerHandler
-	streams MediaStreamMap
+
+	streams map[string]MediaStream
+	players map[Stream]MediaPlayer
+
+	streamsMu sync.Mutex
+	playersMu sync.Mutex
 
 	connections    Counter
 	handshakeFails Counter
@@ -44,9 +53,10 @@ type server struct {
 type ServerHandler interface {
 	OnConnect(Conn)
 	OnCreateStream(Stream)
+	OnDestroyStream(Stream)
 
-	OnPlay(Stream)
-	OnPublish(Stream)
+	OnPlay(Stream, MediaPlayer)
+	OnPublish(Stream, MediaStream)
 
 	OnClose(Conn)
 
@@ -56,7 +66,8 @@ type ServerHandler interface {
 func NewServer(handler ServerHandler) Server {
 	s := &server{
 		handler: handler,
-		streams: NewMediaStreamMap(),
+		streams: make(map[string]MediaStream),
+		players: make(map[Stream]MediaPlayer),
 	}
 
 	return s
@@ -110,8 +121,12 @@ func (s *server) Serve(ln net.Listener) error {
 	}
 }
 
-func (s *server) GetMediaStream(name string) MediaStream {
-	return s.streams.Get(name)
+func (s *server) MediaStream(name string) MediaStream {
+	return s.getStream(name)
+}
+
+func (s *server) MediaPlayer(stream Stream) MediaPlayer {
+	return s.getPlayer(stream)
 }
 
 func (s *server) Stats() ServerStats {
@@ -123,6 +138,59 @@ func (s *server) Stats() ServerStats {
 		BytesInRate:       s.bpsIn.Get(),
 		BytesOutRate:      s.bpsOut.Get(),
 	}
+}
+
+func (s *server) getStream(name string) MediaStream {
+	s.streamsMu.Lock()
+	defer s.streamsMu.Unlock()
+
+	return s.streams[name]
+}
+func (s *server) putStream(name string, stream MediaStream) bool {
+	s.streamsMu.Lock()
+	defer s.streamsMu.Unlock()
+
+	_, found := s.streams[name]
+	if !found {
+		s.streams[name] = stream
+		return true
+	} else {
+		return false
+	}
+}
+
+func (s *server) delStream(name string) {
+	s.streamsMu.Lock()
+	defer s.streamsMu.Unlock()
+
+	delete(s.streams, name)
+}
+
+func (s *server) getPlayer(stream Stream) MediaPlayer {
+	s.playersMu.Lock()
+	defer s.playersMu.Unlock()
+
+	return s.players[stream]
+}
+
+func (s *server) putPlayer(stream Stream, player MediaPlayer) bool {
+	s.playersMu.Lock()
+	defer s.playersMu.Unlock()
+
+	_, found := s.players[stream]
+	if !found {
+		s.players[stream] = player
+		return true
+	} else {
+		return false
+	}
+}
+
+func (s *server) delPlayer(stream Stream) {
+	s.playersMu.Lock()
+	defer s.playersMu.Unlock()
+
+	delete(s.players, stream)
 }
 
 func (s *server) handle(conn net.Conn) {
@@ -179,24 +247,67 @@ func (s *server) invokeConnect(conn Conn, cmd *Command, invoke func(*Command) er
 }
 
 func (s *server) invokePublish(stream Stream, cmd *Command, invoke func(*Command) error) error {
-	mediaStream := func() MediaStream {
-		if cmd.Objects == nil || len(cmd.Objects) != 3 {
-			return nil
-		}
-
-		name, ok := cmd.Objects[1].(string)
-		if !ok || len(name) == 0 {
-			return nil
-		}
-
-		return s.streams.Get(name)
-	}()
-
-	if mediaStream != nil {
-		return ErrPublishBadName(fmt.Errorf("rejected"))
+	if cmd.Objects == nil || len(cmd.Objects) != 3 {
+		return ErrPublishBadName(fmt.Errorf("bad publish arguments: %v", cmd.Objects))
 	}
 
-	return invoke(cmd)
+	name, ok := cmd.Objects[1].(string)
+	if !ok || len(name) == 0 {
+		return ErrPublishBadName(fmt.Errorf("invalid stream name: %v", cmd.Objects[1]))
+	}
+
+	ms := NewMediaStream(stream)
+	ok = s.putStream(name, ms)
+	if !ok {
+		ms.Close()
+		return ErrPublishBadName(fmt.Errorf("invalid stream name: %v", name))
+	}
+
+	err := invoke(cmd)
+	if err != nil {
+		s.delStream(name)
+		ms.Close()
+		return err
+	}
+
+	return nil
+}
+
+func (s *server) invokePlay(stream Stream, cmd *Command, invoke func(*Command) error) error {
+	if cmd.Objects == nil || len(cmd.Objects) < 2 {
+		return ErrPlayFailed(fmt.Errorf("bad play arguments: %v", cmd.Objects))
+	}
+
+	name, ok := cmd.Objects[1].(string)
+	if !ok || len(name) == 0 {
+		return ErrPlayFailed(fmt.Errorf("invalid stream name: %v", cmd.Objects))
+	}
+
+	ms := s.getStream(name)
+	if ms != nil {
+		return ErrPlayFailed(fmt.Errorf("invalid stream name: %v", name))
+	}
+
+	mp, err := NewMediaPlayer(ms, stream)
+	if err != nil {
+		return ErrPlayFailed(err)
+	}
+
+	ok = s.putPlayer(stream, mp)
+	if !ok {
+		mp.Close()
+		return ErrPlayFailed(fmt.Errorf("multiple play requests on the same stream"))
+	}
+
+	err = invoke(cmd)
+	if err != nil {
+		s.delPlayer(stream)
+		mp.Close()
+		return err
+	}
+
+	mp.Start()
+	return nil
 }
 
 // handle connection callbacks
@@ -219,20 +330,23 @@ func (sc *serverConnHandler) OnCreateStream(stream Stream) {
 	sc.server.handler.OnCreateStream(stream)
 }
 
+func (sc *serverConnHandler) OnDestroyStream(stream Stream) {
+	// TODO: make fewer assumptions
+	// if not a player, must be publisher
+	if mp := sc.server.getPlayer(stream); mp != nil {
+		mp.Close()
+		sc.server.delPlayer(stream)
+	} else if ms := sc.server.getStream(stream.Name()); ms != nil {
+		ms.Close()
+		sc.server.delStream(stream.Name())
+	}
+
+	sc.server.handler.OnDestroyStream(stream)
+}
+
 func (sc *serverConnHandler) OnClose(conn Conn) {
 	// should always run
 	defer sc.server.connections.Add(-1)
-
-	for stream, handler := range sc.streams {
-		if handler.mediaPlayer != nil {
-			handler.mediaPlayer.Close()
-		}
-
-		if handler.mediaStream != nil {
-			sc.server.streams.Del(stream.Name())
-			handler.mediaStream.Close()
-		}
-	}
 	sc.server.handler.OnClose(conn)
 }
 
@@ -256,43 +370,11 @@ type serverStreamHandler struct {
 }
 
 func (ss *serverStreamHandler) OnPublish(stream Stream) {
-	log.Debug("Server.OnPublish")
-	if ss.mediaStream == nil {
-		log.Debug("Creating new media stream")
-		ss.mediaStream = NewMediaStream()
-		ss.server.streams.Set(stream.Name(), ss.mediaStream)
-	}
-	ss.server.handler.OnPublish(stream)
+	ss.server.handler.OnPublish(stream, ss.server.getStream(stream.Name()))
 }
 
 func (ss *serverStreamHandler) OnPlay(stream Stream) {
-	log.Debug("Server.OnPlay")
-	ms := ss.server.streams.Get(stream.Name())
-
-	if ss.mediaPlayer == nil && ms != nil {
-		log.Debug("creating new media player")
-		mp, err := NewMediaPlayer(ms, stream)
-
-		if err != nil {
-			log.Error("Failed to create MediaPlayer: %s", err)
-			stream.Conn().Error(err)
-			return
-		} else {
-			ss.mediaPlayer = mp
-			go func() {
-				ss.mediaPlayer.Wait()
-				stream.Conn().Close()
-			}()
-		}
-	} else if ss.mediaPlayer != nil {
-		log.Warning("multiple play requests detected")
-		return
-	} else {
-		stream.Conn().Error(fmt.Errorf("stream not found"))
-		return
-	}
-
-	ss.server.handler.OnPlay(stream)
+	ss.server.handler.OnPlay(stream, ss.server.getPlayer(stream))
 }
 
 func (ss *serverStreamHandler) Invoke(stream Stream, cmd *Command, invoke func(*Command) error) error {
@@ -311,10 +393,6 @@ func (ss *serverStreamHandler) OnReceive(stream Stream, msg *Message) {
 		case AUDIO_TYPE:
 			fallthrough
 		case DATA_AMF0:
-			fallthrough
-		case COMMAND_AMF0:
-			fallthrough
-		case COMMAND_AMF3:
 			tag := &FlvTag{
 				Type:      msg.Type,
 				Timestamp: msg.AbsoluteTimestamp,

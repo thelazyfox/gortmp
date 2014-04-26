@@ -3,9 +3,12 @@ package rtmp
 import (
 	"bytes"
 	"github.com/thelazyfox/gortmp/log"
+	"sync"
 )
 
 type MediaPlayer interface {
+	Stream() Stream
+	Start()
 	Close()
 	Wait()
 }
@@ -16,6 +19,8 @@ type mediaPlayer struct {
 	s  Stream
 
 	done chan bool
+
+	loopOnce sync.Once
 }
 
 func NewMediaPlayer(mediaStream MediaStream, stream Stream) (MediaPlayer, error) {
@@ -32,9 +37,11 @@ func NewMediaPlayer(mediaStream MediaStream, stream Stream) (MediaPlayer, error)
 		done: make(chan bool),
 	}
 
-	go mp.loop()
-
 	return mp, nil
+}
+
+func (mp *mediaPlayer) Stream() Stream {
+	return mp.s
 }
 
 func (mp *mediaPlayer) loop() {
@@ -48,18 +55,18 @@ func (mp *mediaPlayer) loop() {
 		if err != nil {
 			log.Info("MediaPlayer end: %s", err)
 			return
-		} else {
-			mp.writeTag(tag)
+		}
+
+		err = mp.writeTag(tag)
+		if err != nil {
+			log.Info("MediaPlayer end: %s", err)
+			return
 		}
 	}
 }
 
-func (mp *mediaPlayer) Wait() {
-	<-mp.done
-}
-
-func (mp *mediaPlayer) writeTag(tag *FlvTag) {
-	mp.s.Send(&Message{
+func (mp *mediaPlayer) writeTag(tag *FlvTag) error {
+	return mp.s.Send(&Message{
 		Type:              tag.Type,
 		AbsoluteTimestamp: tag.Timestamp,
 		Timestamp:         tag.Timestamp,
@@ -68,6 +75,16 @@ func (mp *mediaPlayer) writeTag(tag *FlvTag) {
 	})
 }
 
+func (mp *mediaPlayer) Start() {
+	mp.loopOnce.Do(func() {
+		go mp.loop()
+	})
+}
+
 func (mp *mediaPlayer) Close() {
 	mp.mb.Close()
+}
+
+func (mp *mediaPlayer) Wait() {
+	<-mp.done
 }

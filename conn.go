@@ -36,7 +36,9 @@ type Conn interface {
 
 type ConnHandler interface {
 	OnConnect(Conn)
+
 	OnCreateStream(Stream)
+	OnDestroyStream(Stream)
 
 	OnClose(Conn)
 
@@ -495,6 +497,9 @@ func (c *conn) waitClose() {
 	case <-c.writeDone:
 	}
 
+	for _, stream := range c.streams {
+		c.handler.OnDestroyStream(stream)
+	}
 	c.handler.OnClose(c)
 }
 

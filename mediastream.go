@@ -10,45 +10,6 @@ var (
 	MediaStreamClosed = errors.New("media stream closed")
 )
 
-// Simple utility class
-type MediaStreamMap interface {
-	Get(string) MediaStream
-	Set(string, MediaStream)
-	Del(string)
-}
-
-type mediaStreamMap struct {
-	m map[string]MediaStream
-	l sync.RWMutex
-}
-
-func NewMediaStreamMap() MediaStreamMap {
-	return &mediaStreamMap{
-		m: make(map[string]MediaStream),
-	}
-}
-
-func (m *mediaStreamMap) Get(name string) MediaStream {
-	m.l.RLock()
-	defer m.l.RUnlock()
-
-	return m.m[name]
-}
-
-func (m *mediaStreamMap) Set(name string, stream MediaStream) {
-	m.l.Lock()
-	defer m.l.Unlock()
-
-	m.m[name] = stream
-}
-
-func (m *mediaStreamMap) Del(name string) {
-	m.l.Lock()
-	defer m.l.Unlock()
-
-	delete(m.m, name)
-}
-
 // All Measurements in kbps
 type MediaStreamStats struct {
 	VideoBytes int64
@@ -62,15 +23,21 @@ type MediaStreamStats struct {
 
 // MediaStream pubsub
 type MediaStream interface {
+	Stream() Stream
+
 	Publish(*FlvTag) error
 	Subscribe() (chan *FlvTag, error)
 	Unsubscribe(chan *FlvTag)
 	Close()
 
+	IsClosed() bool
+
 	Stats() MediaStreamStats
 }
 
 type mediaStream struct {
+	stream Stream
+
 	pub   chan *FlvTag
 	sub   chan chan *FlvTag
 	unsub chan chan *FlvTag
@@ -92,17 +59,77 @@ type mediaStream struct {
 	doneOnce sync.Once
 }
 
-func NewMediaStream() MediaStream {
+func NewMediaStream(stream Stream) MediaStream {
 	ms := &mediaStream{
-		pub:   make(chan *FlvTag),
-		sub:   make(chan chan *FlvTag),
-		unsub: make(chan chan *FlvTag),
-		done:  make(chan bool),
+		stream: stream,
+		pub:    make(chan *FlvTag),
+		sub:    make(chan chan *FlvTag),
+		unsub:  make(chan chan *FlvTag),
+		done:   make(chan bool),
 	}
 
 	go ms.loop()
 
 	return ms
+}
+
+func (ms *mediaStream) Stream() Stream {
+	return ms.stream
+}
+
+func (ms *mediaStream) Publish(tag *FlvTag) error {
+	// select to avoid blocking when the loop exits
+	select {
+	case ms.pub <- tag:
+		return nil
+	case <-ms.done:
+		return MediaStreamClosed
+	}
+}
+
+func (ms *mediaStream) Subscribe() (chan *FlvTag, error) {
+	ch := make(chan *FlvTag)
+
+	select {
+	case ms.sub <- ch:
+		return ch, nil
+	case <-ms.done:
+		return nil, MediaStreamClosed
+	}
+}
+
+func (ms *mediaStream) Unsubscribe(ch chan *FlvTag) {
+	select {
+	case ms.unsub <- ch:
+	case <-ms.done:
+	}
+}
+
+func (ms *mediaStream) Close() {
+	ms.doneOnce.Do(func() {
+		close(ms.done)
+	})
+}
+
+func (ms *mediaStream) IsClosed() bool {
+	select {
+	case <-ms.done:
+		return true
+	default:
+		return false
+	}
+}
+
+func (ms *mediaStream) Stats() MediaStreamStats {
+	return MediaStreamStats{
+		VideoBytes: ms.videoBytes.Get(),
+		AudioBytes: ms.audioBytes.Get(),
+		Bytes:      ms.bytes.Get(),
+
+		VideoBytesRate: ms.videoBps.Get(),
+		AudioBytesRate: ms.audioBps.Get(),
+		BytesRate:      ms.bps.Get(),
+	}
 }
 
 func (ms *mediaStream) toInt(f float64) int64 {
@@ -217,51 +244,5 @@ func (ms *mediaStream) loop() {
 		case <-ms.done:
 			return // shutdown
 		}
-	}
-}
-
-func (ms *mediaStream) Publish(tag *FlvTag) error {
-	// select to avoid blocking when the loop exits
-	select {
-	case ms.pub <- tag:
-		return nil
-	case <-ms.done:
-		return MediaStreamClosed
-	}
-}
-
-func (ms *mediaStream) Subscribe() (chan *FlvTag, error) {
-	ch := make(chan *FlvTag)
-
-	select {
-	case ms.sub <- ch:
-		return ch, nil
-	case <-ms.done:
-		return nil, MediaStreamClosed
-	}
-}
-
-func (ms *mediaStream) Unsubscribe(ch chan *FlvTag) {
-	select {
-	case ms.unsub <- ch:
-	case <-ms.done:
-	}
-}
-
-func (ms *mediaStream) Close() {
-	ms.doneOnce.Do(func() {
-		close(ms.done)
-	})
-}
-
-func (ms *mediaStream) Stats() MediaStreamStats {
-	return MediaStreamStats{
-		VideoBytes: ms.videoBytes.Get(),
-		AudioBytes: ms.audioBytes.Get(),
-		Bytes:      ms.bytes.Get(),
-
-		VideoBytesRate: ms.videoBps.Get(),
-		AudioBytesRate: ms.audioBps.Get(),
-		BytesRate:      ms.bps.Get(),
 	}
 }

@@ -247,7 +247,7 @@ func (h *handler) OnPlay(rtmp.Stream) {
 func (h *handler) OnPublish(stream rtmp.Stream) {
 	// go RecordStream(h.server.GetMediaStream(stream.Name()), "out.flv")
 	go TrackStarvation(stream.Name(), h.server.GetMediaStream(stream.Name()))
-	go RecordStream(h.server.GetMediaStream(stream.Name()), stream.Name(), 25*1024*1024, 60*1000)
+	go RecordStream(h.server.GetMediaStream(stream.Name()), stream.Name(), 25*1024*1024, 15*1000)
 	fmt.Printf("OnPublish\n")
 }
 
