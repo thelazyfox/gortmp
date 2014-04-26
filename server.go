@@ -331,14 +331,18 @@ func (sc *serverConnHandler) OnCreateStream(stream Stream) {
 }
 
 func (sc *serverConnHandler) OnDestroyStream(stream Stream) {
-	// TODO: make fewer assumptions
-	// if not a player, must be publisher
-	if mp := sc.server.getPlayer(stream); mp != nil {
-		mp.Close()
-		sc.server.delPlayer(stream)
-	} else if ms := sc.server.getStream(stream.Name()); ms != nil {
-		ms.Close()
-		sc.server.delStream(stream.Name())
+	if stream.Publishing() {
+		mp := sc.server.getPlayer(stream)
+		if mp != nil {
+			mp.Close()
+		}
+	}
+
+	if stream.Playing() {
+		ms := sc.server.getStream(stream.Name())
+		if ms != nil {
+			ms.Close()
+		}
 	}
 
 	sc.server.handler.OnDestroyStream(stream)
