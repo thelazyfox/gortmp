@@ -233,7 +233,6 @@ func (sc *serverConnHandler) OnCreateStream(stream Stream) {
 }
 
 func (sc *serverConnHandler) OnDestroyStream(stream Stream) {
-	sc.server.log.Debugf("Cleaning up stream: %s", stream.Name())
 	if stream.Publishing() {
 		sc.server.log.Debugf("closing media stream")
 		mp := sc.server.getStream(stream.Name())
