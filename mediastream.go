@@ -29,10 +29,11 @@ type MediaStream interface {
 	Publish(*FlvTag) error
 	Subscribe() (chan *FlvTag, error)
 	Unsubscribe(chan *FlvTag)
+
+	Wait()
 	Close()
 
 	IsClosed() bool
-
 	Stats() MediaStreamStats
 }
 
@@ -108,6 +109,10 @@ func (ms *mediaStream) Unsubscribe(ch chan *FlvTag) {
 	case ms.unsub <- ch:
 	case <-ms.done:
 	}
+}
+
+func (ms *mediaStream) Wait() {
+	<-ms.done
 }
 
 func (ms *mediaStream) Close() {
