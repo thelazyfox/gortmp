@@ -408,7 +408,7 @@ func (ss *serverStreamHandler) invokePlay(stream Stream, cmd *Command, callback 
 	}
 
 	ms := ss.server.getStream(name)
-	if ms != nil {
+	if ms == nil {
 		return ErrPlayFailed(fmt.Errorf("invalid stream name: %v", name))
 	}
 
