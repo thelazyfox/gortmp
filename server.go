@@ -421,7 +421,8 @@ func (ss *serverStreamHandler) invokePlay(stream Stream, cmd *Command, callback 
 	ok = ss.server.putPlayer(stream, mp)
 	if !ok {
 		mp.Close()
-		return ErrPlayFailed(fmt.Errorf("multiple play requests on the same stream"))
+		ss.server.delPlayer(stream)
+		ss.server.log.Warnf("ignoring play on already playing stream")
 	}
 
 	err = callback.Invoke(cmd)
