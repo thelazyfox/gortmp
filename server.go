@@ -204,7 +204,7 @@ func (s *server) handle(conn net.Conn) {
 	if err != nil {
 		s.handshakeFails.Add(1)
 		s.connections.Add(-1)
-		s.log.Errorf("SHandshake(%s) failed: %s", conn.RemoteAddr())
+		s.log.Errorf("SHandshake(%s) failed: %s", conn.RemoteAddr(), err)
 		netConn.Close()
 		return
 	}
