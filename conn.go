@@ -5,18 +5,31 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/thelazyfox/goamf"
-	"github.com/thelazyfox/gortmp/log"
-	"io"
 	"net"
 )
 
-// Stream
+// Conn
+
+type Invoker interface {
+	Invoke(*Command) error
+}
+
+type ConnInvoker struct {
+	Conn    Conn
+	Invoker Invoker
+	Func    func(Conn, *Command, Invoker) error
+}
+
+func (ci *ConnInvoker) Invoke(cmd *Command) error {
+	return ci.Func(ci.Conn, cmd, ci.Invoker)
+}
 
 type Conn interface {
 	// basics
 	Send(msg *Message) error
 	SendCommand(cmd *Command) error
 	Error(err error)
+	Fatal(err error)
 	Close()
 
 	// probably should be private
@@ -40,10 +53,10 @@ type ConnHandler interface {
 	OnCreateStream(Stream)
 	OnDestroyStream(Stream)
 
-	OnClose(Conn)
+	OnClose(Conn, error)
 
 	OnReceive(Conn, *Message)
-	Invoke(Conn, *Command, func(*Command) error) error
+	Invoke(Conn, *Command, Invoker) error
 }
 
 type conn struct {
@@ -53,19 +66,23 @@ type conn struct {
 
 	app string
 
-	streams map[uint32]Stream
+	streams map[uint32]*stream
 
-	readDone  chan bool
-	writeDone chan bool
+	readDone  chan error
+	writeDone chan error
+
+	log Logger
 }
 
 func NewConn(netConn NetConn, handler ConnHandler) Conn {
+	logTag := fmt.Sprintf("Conn(%s)", netConn.Conn().RemoteAddr())
 	c := &conn{
 		netConn:   netConn,
 		handler:   handler,
-		streams:   make(map[uint32]Stream),
-		readDone:  make(chan bool),
-		writeDone: make(chan bool),
+		streams:   make(map[uint32]*stream),
+		readDone:  make(chan error),
+		writeDone: make(chan error),
+		log:       NewLogger(logTag),
 	}
 
 	c.chunkStream = NewChunkStream(c)
@@ -83,6 +100,8 @@ func (c *conn) Send(msg *Message) error {
 }
 
 func (c *conn) SendCommand(cmd *Command) error {
+	c.log.Tracef("SendCommand(%+v)", cmd)
+
 	buf := new(bytes.Buffer)
 	err := cmd.Write(buf)
 	if err != nil {
@@ -117,7 +136,14 @@ func (c *conn) App() string {
 	return c.app
 }
 
+func (c *conn) Fatal(err error) {
+	c.Error(err)
+	c.log.Errorf("Fatal")
+	c.Close()
+}
+
 func (c *conn) Error(err error) {
+	c.log.Errorf("Error(%s)", err)
 	var cmd *Command
 
 	if errStatus, ok := err.(ErrorStatus); ok {
@@ -141,7 +167,7 @@ func (c *conn) Error(err error) {
 	}
 
 	c.SendCommand(cmd)
-	log.Error("Closing connection with error: %s", err)
+	c.log.Errorf("Closing connection with error: %s", err)
 	c.Close()
 }
 
@@ -154,13 +180,13 @@ func (c *conn) SendStreamBegin(streamId uint32) {
 
 	err := binary.Write(buf, binary.BigEndian, EVENT_STREAM_BEGIN)
 	if err != nil {
-		c.Error(err)
+		c.Fatal(err)
 		return
 	}
 
 	err = binary.Write(buf, binary.BigEndian, streamId)
 	if err != nil {
-		c.Error(err)
+		c.Fatal(err)
 		return
 	}
 
@@ -176,7 +202,7 @@ func (c *conn) SendStreamBegin(streamId uint32) {
 
 	err = c.chunkStream.Send(msg)
 	if err != nil {
-		c.Error(err)
+		c.Fatal(err)
 	}
 }
 
@@ -192,8 +218,8 @@ func (c *conn) SetChunkSize(size uint32) {
 	}()
 
 	if err != nil {
-		log.Error("SetChunkSize failed with error: %s", err)
-		c.Error(err)
+		c.log.Errorf("SetChunkSize failed with error: %s", err)
+		c.Fatal(err)
 	}
 }
 
@@ -208,7 +234,7 @@ func (c *conn) SetWindowSize(size uint32) {
 	}()
 
 	if err != nil {
-		c.Error(fmt.Errorf("SetWindowSize failed: %s", err))
+		c.Fatal(fmt.Errorf("SetWindowSize failed: %s", err))
 	}
 }
 
@@ -223,36 +249,33 @@ func (c *conn) SetPeerBandwidth(size uint32, limit uint8) {
 	}()
 
 	if err != nil {
-		c.Error(fmt.Errorf("SetPeerBandwidthFailed: %s", err))
+		c.Fatal(fmt.Errorf("SetPeerBandwidthFailed: %s", err))
 	}
 }
 
 func (c *conn) OnMessage(msg *Message) {
-	log.Trace("%#v", *msg)
+	c.log.Tracef("OnMessage(%+v)", msg)
 	switch msg.Type {
 	case COMMAND_AMF3:
 		cmd, err := c.parseAmf3(bytes.NewBuffer(msg.Buf.Bytes()), msg.StreamID)
 		if err != nil {
-			log.Warning("Invalid COMMAND_AMF3 message")
-			buf := bytes.NewBuffer(msg.Buf.Bytes())
-			buf.ReadByte()
-			c.amfDump(buf)
-
-			c.onReceive(msg)
+			objs := dumpAmf3(bytes.NewBuffer(msg.Buf.Bytes()))
+			c.log.Warnf("Invalid COMMAND_AMF3 message: %+v", objs)
+			c.OnReceive(msg)
 		} else {
-			c.invoke(cmd)
+			c.OnCommand(cmd)
 		}
 	case COMMAND_AMF0:
 		cmd, err := c.parseAmf0(bytes.NewBuffer(msg.Buf.Bytes()), msg.StreamID, nil)
 		if err != nil {
-			log.Warning("Invalid COMMAND_AMF0 message")
-			c.amfDump(bytes.NewBuffer(msg.Buf.Bytes()))
-			c.onReceive(msg)
+			objs := dumpAmf0(bytes.NewBuffer(msg.Buf.Bytes()))
+			c.log.Warnf("Invalid COMMAND_AMF0 message: %+v", objs)
+			c.OnReceive(msg)
 		} else {
-			c.invoke(cmd)
+			c.OnCommand(cmd)
 		}
 	default:
-		c.onReceive(msg)
+		c.OnReceive(msg)
 	}
 }
 
@@ -261,19 +284,19 @@ func (c *conn) OnWindowFull(count uint32) {
 	go func() {
 		err := c.chunkStream.SendAcknowledgement(count)
 		if err != nil {
-			c.Error(fmt.Errorf("OnWindowFull error: %s", err))
+			c.Fatal(fmt.Errorf("OnWindowFull error: %s", err))
 		}
 	}()
 }
 
-func (c *conn) onReceive(msg *Message) {
+func (c *conn) OnReceive(msg *Message) {
 	if msg.StreamID == 0 {
 		c.handler.OnReceive(c, msg)
 	} else {
 		stream := c.streams[msg.StreamID]
 
 		if stream != nil {
-			stream.onReceive(msg)
+			stream.OnReceive(msg)
 		} else {
 			c.Error(fmt.Errorf("invalid message stream id"))
 		}
@@ -340,11 +363,10 @@ func (c *conn) invokeConnect(cmd *Command) error {
 }
 
 func (c *conn) invokeCreateStream(cmd *Command) error {
-	log.Trace("invokeCreateStream: %#v", *cmd)
+	c.log.Tracef("invokeCreateStream(%#v)", *cmd)
 
 	csid, err := c.chunkStream.CreateChunkStream(LowPriority)
 	if err != nil {
-		log.Debug("failed to create chunk stream: %s", err)
 		return err
 	}
 
@@ -358,7 +380,6 @@ func (c *conn) invokeCreateStream(cmd *Command) error {
 	})
 
 	if err != nil {
-		log.Debug("invokeCreateStream error: %s", err)
 		return err
 	}
 
@@ -399,28 +420,28 @@ func (c *conn) invokeFCPublish(cmd *Command) error {
 func (c *conn) allocateStream(csid uint32) Stream {
 	for i := uint32(1); ; i += 1 {
 		if s := c.streams[i]; s == nil {
-			c.streams[i] = NewStream(i, c, csid)
+			c.streams[i] = newStream(i, c, csid)
 			return c.streams[i]
 		}
 	}
 }
 
-func (c *conn) invoke(cmd *Command) {
+func (c *conn) OnCommand(cmd *Command) {
 	var err error
 
 	if cmd.StreamID == 0 {
-		err = c.handler.Invoke(c, cmd, c.Invoke)
+		err = c.handler.Invoke(c, cmd, c)
 	} else {
 		stream := c.streams[cmd.StreamID]
 		if stream != nil {
-			err = stream.invoke(cmd)
+			err = stream.OnCommand(cmd)
 		} else {
 			err = fmt.Errorf("invalid stream id specified")
 		}
 	}
 
 	if err != nil {
-		c.Error(err)
+		c.Fatal(err)
 	}
 }
 
@@ -429,24 +450,10 @@ func (c *conn) parseAmf3(buf *bytes.Buffer, streamid uint32) (*Command, error) {
 
 	_, err := buf.ReadByte()
 	if err != nil {
-		log.Debug("parseAmf3 error")
 		return nil, err
 	}
 
 	return c.parseAmf0(buf, streamid, cmd)
-}
-
-func (c *conn) amfDump(buf *bytes.Buffer) {
-	i := 0
-	for buf.Len() > 0 {
-		object, err := amf.ReadValue(buf)
-		if err != nil {
-			log.Debug("amfDump failed to read amf object")
-			return
-		}
-		log.Debug("conn.amfDump: %d - %#v", i, object)
-		i += 1
-	}
 }
 
 func (c *conn) parseAmf0(buf *bytes.Buffer, streamid uint32, cmd *Command) (*Command, error) {
@@ -456,14 +463,12 @@ func (c *conn) parseAmf0(buf *bytes.Buffer, streamid uint32, cmd *Command) (*Com
 
 	name, err := amf.ReadString(buf)
 	if err != nil {
-		log.Debug("parseAmf0 failed to read name")
 		return nil, err
 	}
 	cmd.Name = name
 
 	txnid, err := amf.ReadDouble(buf)
 	if err != nil {
-		log.Debug("parseAmf0 failed to read transaction id")
 		return nil, err
 	}
 	cmd.TransactionID = uint32(txnid)
@@ -471,7 +476,6 @@ func (c *conn) parseAmf0(buf *bytes.Buffer, streamid uint32, cmd *Command) (*Com
 	for buf.Len() > 0 {
 		object, err := amf.ReadValue(buf)
 		if err != nil {
-			log.Debug("parseAmf0 failed to read amf object")
 			return nil, err
 		}
 		cmd.Objects = append(cmd.Objects, object)
@@ -483,9 +487,11 @@ func (c *conn) parseAmf0(buf *bytes.Buffer, streamid uint32, cmd *Command) (*Com
 }
 
 func (c *conn) waitClose() {
+	var err error
+
 	select {
-	case <-c.readDone:
-	case <-c.writeDone:
+	case err = <-c.readDone:
+	case err = <-c.writeDone:
 	}
 
 	// shut down when read or write ends
@@ -500,25 +506,16 @@ func (c *conn) waitClose() {
 	for _, stream := range c.streams {
 		c.handler.OnDestroyStream(stream)
 	}
-	c.handler.OnClose(c)
+
+	c.handler.OnClose(c, err)
 }
 
 func (c *conn) readFrom() {
-	n, err := c.chunkStream.ReadFrom(c.netConn)
-	if err == nil || err == io.EOF {
-		log.Debug("readLoop ended after %d bytes", n)
-	} else {
-		log.Debug("readLoop ended after %d bytes with err %s", n, err)
-	}
-	c.readDone <- true
+	_, err := c.chunkStream.ReadFrom(c.netConn)
+	c.readDone <- err
 }
 
 func (c *conn) writeTo() {
-	n, err := c.chunkStream.WriteTo(c.netConn)
-	if err == nil {
-		log.Debug("writeLoop ended after %d bytes", n)
-	} else {
-		log.Debug("writeLoop ended after %d bytes with err %s", n, err)
-	}
-	c.writeDone <- true
+	_, err := c.chunkStream.WriteTo(c.netConn)
+	c.writeDone <- err
 }

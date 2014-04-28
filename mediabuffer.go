@@ -2,7 +2,7 @@ package rtmp
 
 import (
 	"container/list"
-	"github.com/thelazyfox/gortmp/log"
+	"fmt"
 )
 
 type MediaBuffer interface {
@@ -18,6 +18,7 @@ type mediaBuffer struct {
 	tags    list.List
 	size    uint32
 	maxSize uint32
+	log     Logger
 }
 
 func NewMediaBuffer(ms MediaStream, maxSize uint32) (MediaBuffer, error) {
@@ -26,11 +27,13 @@ func NewMediaBuffer(ms MediaStream, maxSize uint32) (MediaBuffer, error) {
 		return nil, err
 	}
 
+	logTag := fmt.Sprintf("MediaBuffer(%s)", ms.Stream().Name())
 	mb := &mediaBuffer{
 		ms:      ms,
 		sub:     sub,
 		out:     make(chan *FlvTag),
 		maxSize: maxSize,
+		log:     NewLogger(logTag),
 	}
 
 	go mb.loop()
@@ -43,8 +46,9 @@ func (mb *mediaBuffer) MediaStream() MediaStream {
 }
 
 func (mb *mediaBuffer) loop() {
+	mb.log.Debugf("start")
+	defer mb.log.Debugf("stop")
 	defer func() {
-		log.Debug("MediaBuffer shutdown")
 		close(mb.out)
 	}()
 
@@ -76,11 +80,11 @@ func (mb *mediaBuffer) loop() {
 }
 
 func (mb *mediaBuffer) push(tag *FlvTag) {
-	if mb.size+tag.Size > mb.maxSize {
-		log.Debug("MediaBuffer dropping frame")
-	} else {
+	if mb.size+tag.Size < mb.maxSize {
 		mb.size += tag.Size
 		mb.tags.PushBack(tag)
+	} else {
+		mb.log.Warnf("dropping frame")
 	}
 }
 

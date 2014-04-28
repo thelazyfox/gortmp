@@ -2,7 +2,7 @@ package rtmp
 
 import (
 	"bytes"
-	"github.com/thelazyfox/gortmp/log"
+	"fmt"
 	"sync"
 )
 
@@ -21,6 +21,8 @@ type mediaPlayer struct {
 	done chan bool
 
 	loopOnce sync.Once
+
+	log Logger
 }
 
 func NewMediaPlayer(mediaStream MediaStream, stream Stream) (MediaPlayer, error) {
@@ -30,11 +32,13 @@ func NewMediaPlayer(mediaStream MediaStream, stream Stream) (MediaPlayer, error)
 		return nil, err
 	}
 
+	logTag := fmt.Sprintf("MediaPlayer(%s, %s)", mediaStream.Stream().Name(), stream.Conn().Addr())
 	mp := &mediaPlayer{
 		mb:   mb,
 		ms:   mediaStream,
 		s:    stream,
 		done: make(chan bool),
+		log:  NewLogger(logTag),
 	}
 
 	return mp, nil
@@ -45,6 +49,8 @@ func (mp *mediaPlayer) Stream() Stream {
 }
 
 func (mp *mediaPlayer) loop() {
+	defer mp.log.Debugf("start")
+	defer mp.log.Debugf("stop")
 	defer mp.Close()
 	defer func() {
 		close(mp.done)
@@ -53,13 +59,15 @@ func (mp *mediaPlayer) loop() {
 	for {
 		tag, err := mp.mb.Get()
 		if err != nil {
-			log.Info("MediaPlayer end: %s", err)
+			if err != MediaStreamClosed {
+				mp.log.Errorf("error getting next tag: %s", err)
+			}
 			return
 		}
 
 		err = mp.writeTag(tag)
 		if err != nil {
-			log.Info("MediaPlayer end: %s", err)
+			mp.log.Errorf("error writing tag: %s", err)
 			return
 		}
 	}

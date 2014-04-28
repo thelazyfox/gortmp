@@ -9,7 +9,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
-	"github.com/thelazyfox/gortmp/log"
 	"io"
 	"io/ioutil"
 )
@@ -89,18 +88,23 @@ func getDigestOffset(buf []byte, scheme int) uint32 {
 	}
 }
 
-func validate(buf []byte) (int, bool) {
-	if validateScheme(buf, 0) {
-		return 0, true
-	} else if validateScheme(buf, 1) {
-		return 1, true
-	} else {
-		// default to scheme 0
-		return 0, false
+// TODO: make this pass errors along somehow
+func validate(buf []byte) (int, error) {
+	var errs []string
+
+	for i := 0; i < 2; i++ {
+		err := validateScheme(buf, i)
+		if err != nil {
+			errs = append(errs, err.Error())
+		} else {
+			return i, nil
+		}
 	}
+
+	return 0, fmt.Errorf("all validation schemes failed: %v", errs)
 }
 
-func validateScheme(buf []byte, scheme int) bool {
+func validateScheme(buf []byte, scheme int) error {
 	var digestOffset uint32
 	switch scheme {
 	case 0:
@@ -108,8 +112,7 @@ func validateScheme(buf []byte, scheme int) bool {
 	case 1:
 		digestOffset = getDigestOffset1(buf)
 	default:
-		log.Error("Unknown validation scheme: %d", scheme)
-		return false
+		return fmt.Errorf("validateScheme(%d): invlaid scheme", scheme)
 	}
 
 	tempBuffer := make([]byte, HANDSHAKE_SIZE-DIGEST_LENGTH)
@@ -118,11 +121,14 @@ func validateScheme(buf []byte, scheme int) bool {
 
 	hash, err := calculateHMACsha256(tempBuffer, GENUINE_FP_KEY[:30])
 	if err != nil {
-		log.Error("Failed to get hmac digest: %s", err)
-		return false
+		return fmt.Errorf("validateScheme(%d) calculateHMAC failed: %s", scheme, err)
 	}
 
-	return bytes.Compare(buf[digestOffset:digestOffset+DIGEST_LENGTH], hash) != 0
+	if bytes.Compare(buf[digestOffset:digestOffset+DIGEST_LENGTH], hash) != 0 {
+		return fmt.Errorf("validateScheme(%d) digest comparison failed", scheme)
+	}
+
+	return nil
 }
 
 func doSimpleHandshake(conn NetConn, c1 []byte) error {
@@ -130,20 +136,22 @@ func doSimpleHandshake(conn NetConn, c1 []byte) error {
 }
 
 func SHandshake(conn NetConn) error {
+	logTag := fmt.Sprintf("SHandshake(%s)", conn.Conn().RemoteAddr())
+	log := NewLogger(logTag)
 	c0, err := conn.ReadByte()
 	if err != nil {
 		return err
 	}
 
 	if c0 != 0x03 {
-		log.Warning("SHandshake unsupported handshake type: %x", c0)
+		log.Warnf("SHandshake unsupported handshake type: %x", c0)
 	}
 
 	c1 := make([]byte, HANDSHAKE_SIZE)
 	if _, err := io.ReadFull(conn, c1); err != nil {
 		return err
 	}
-	log.Debug("SHandshake read c1")
+	log.Debugf("SHandshake read c1")
 
 	response := make([]byte, 2*HANDSHAKE_SIZE+1)
 	s0 := response[0:1]
@@ -156,14 +164,14 @@ func SHandshake(conn NetConn) error {
 	// Check the first byte of version
 	v := c1[4:8]
 	if v[0] == 0 {
-		log.Warning("SHandshake unversioned flash client detected: %x %x %x %x", v[0], v[1], v[2], v[3])
+		log.Warnf("SHandshake unversioned flash client detected: %x %x %x %x", v[0], v[1], v[2], v[3])
 	}
 
-	scheme, ok := validate(c1)
-	if !ok {
-		log.Warning("SHandshake invalid flash client detected")
+	scheme, err := validate(c1)
+	if err != nil {
+		log.Warnf("SHandshake failed to get validation scheme: %s", err)
 	}
-	log.Debug("SHandshake validated scheme %d", scheme)
+	log.Debugf("SHandshake validated scheme %d", scheme)
 
 	// prep output
 	binary.BigEndian.PutUint32(s1[4:8], 0x01020304)
@@ -215,7 +223,7 @@ func SHandshake(conn NetConn) error {
 		}
 
 		done <- nil
-		log.Debug("SHandshake response written")
+		log.Tracef("SHandshake response written")
 	}()
 
 	go func() {
@@ -232,7 +240,7 @@ func SHandshake(conn NetConn) error {
 		return fmt.Errorf("SHandshake connection error: %s", err)
 	}
 
-	log.Debug("SHandshake Complete")
+	log.Debugf("SHandshake Complete")
 
 	return nil
 }

@@ -5,11 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"github.com/thelazyfox/gortmp"
-	"github.com/thelazyfox/gortmp/log"
-	"github.com/zhangpeihao/goflv"
+	"log"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
+	"os"
 	"time"
 )
 
@@ -17,6 +17,7 @@ var (
 	listenAddr = flag.String("listen", ":1935", "The address to bind to")
 )
 
+/*
 func RecordStream(ms rtmp.MediaStream, filebase string, maxSize, maxLen uint32) {
 	log.Info("RecordStream staring...")
 	mb, err := rtmp.NewMediaBuffer(ms, 4*1024*1024)
@@ -140,12 +141,16 @@ func RecordStream(ms rtmp.MediaStream, filebase string, maxSize, maxLen uint32) 
 
 		size += tag.Size
 	}
-}
+}*/
 
-func TrackStarvation(streamName string, ms rtmp.MediaStream) {
+func TrackStarvation(ms rtmp.MediaStream) {
+	log := rtmp.NewLogger(fmt.Sprintf("TrackStarvation(%s)", ms.Stream().Name()))
+	log.Infof("start")
+	defer log.Infof("end")
+
 	ch, err := ms.Subscribe()
 	if err != nil {
-		log.Error("Starvation tracker failed to subscribe to stream: %s", streamName)
+		log.Errorf("stream subscribe failed")
 		return
 	}
 
@@ -163,6 +168,7 @@ func TrackStarvation(streamName string, ms rtmp.MediaStream) {
 			if ok {
 				if tag.Type == rtmp.VIDEO_TYPE {
 					curTs = int64(tag.Timestamp)
+					log.Tracef("tag.Timestamp=%d", tag.Timestamp)
 				}
 			} else {
 				return
@@ -174,6 +180,7 @@ func TrackStarvation(streamName string, ms rtmp.MediaStream) {
 			} else {
 				streamDelta := (curTs - lastTs)
 				clockDelta := time.Since(lastClock).Nanoseconds() / 1000000
+				log.Debugf("streamDelta=%d,clockDelta=%d", streamDelta, clockDelta)
 				lastTs = curTs
 				lastClock = time.Now()
 				history.PushFront(clockDelta - streamDelta)
@@ -189,8 +196,9 @@ func TrackStarvation(streamName string, ms rtmp.MediaStream) {
 				}
 
 				// this mimics the behavior of the wowza starvation tracker
-				fmt.Printf("TrackStarvation starved = %t\n", float64(sum)/float64(clockDelta)/float64(history.Len()) > 0.05)
-				fmt.Printf("TrackStarvation for stream %s - %d\n", streamName, sum/int64(history.Len()))
+				log.Infof("sum = %d, len = %d", sum, history.Len())
+				log.Infof("starved = %t", float64(sum)/float64(clockDelta)/float64(history.Len()) > 0.05)
+				log.Infof("starvation = %d", sum/int64(history.Len()))
 			}
 		}
 	}
@@ -198,10 +206,16 @@ func TrackStarvation(streamName string, ms rtmp.MediaStream) {
 
 func main() {
 	flag.Parse()
-	log.SetLogLevel(log.DEBUG)
+	log.SetOutput(os.Stdout)
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	rtmp.SetLogLevel(rtmp.LogDebug)
 
 	go func() {
-		fmt.Println(http.ListenAndServe(":6060", nil))
+		log := rtmp.NewLogger("http.ListenAndServe(:6060)")
+		err := http.ListenAndServe(":6060", nil)
+		if err != nil {
+			log.Errorf("error: %s", err)
+		}
 	}()
 
 	ln, err := net.Listen("tcp", *listenAddr)
@@ -210,9 +224,10 @@ func main() {
 		return
 	}
 
-	fmt.Printf("Listening on: %s\n", ln.Addr().String())
+	fmt.Printf("Listening on: %s\n", ln.Addr())
 
-	h := &handler{}
+	logTag := fmt.Sprintf("DemoServer(%s)", ln.Addr())
+	h := &handler{log: rtmp.NewLogger(logTag)}
 	server := rtmp.NewServer(h)
 	h.server = server
 	err = server.Serve(ln)
@@ -226,36 +241,41 @@ func main() {
 
 type handler struct {
 	server rtmp.Server
+	log    rtmp.Logger
 }
 
 func (h *handler) OnAccept(rtmp.Conn) {
-	fmt.Printf("OnAccept\n")
+	h.log.Infof("OnAccept")
 }
 
-func (h *handler) OnConnect(rtmp.Conn) {
-	fmt.Printf("OnConnect\n")
+func (h *handler) OnConnect(conn rtmp.Conn) {
+	h.log.Infof("OnConnect(%s)", conn.Addr())
 }
 
 func (h *handler) OnCreateStream(rtmp.Stream) {
-	fmt.Printf("OnCreateStream\n")
+	h.log.Infof("OnCreateStream")
 }
 
-func (h *handler) OnPlay(rtmp.Stream) {
-	fmt.Printf("OnPlay\n")
+func (h *handler) OnDestroyStream(rtmp.Stream) {
+	h.log.Infof("OnDestroyStream")
 }
 
-func (h *handler) OnPublish(stream rtmp.Stream) {
+func (h *handler) OnPlay(rtmp.Stream, rtmp.MediaPlayer) {
+	h.log.Infof("OnPlay")
+}
+
+func (h *handler) OnPublish(stream rtmp.Stream, publisher rtmp.MediaStream) {
 	// go RecordStream(h.server.GetMediaStream(stream.Name()), "out.flv")
-	go TrackStarvation(stream.Name(), h.server.GetMediaStream(stream.Name()))
-	go RecordStream(h.server.GetMediaStream(stream.Name()), stream.Name(), 25*1024*1024, 15*1000)
-	fmt.Printf("OnPublish\n")
+	go TrackStarvation(publisher)
+	// go RecordStream(h.server.GetMediaStream(stream.Name()), stream.Name(), 25*1024*1024, 15*1000)
+	h.log.Infof("OnPublish")
 }
 
-func (h *handler) OnClose(rtmp.Conn) {
-	fmt.Printf("OnClose\n")
+func (h *handler) OnClose(conn rtmp.Conn, err error) {
+	h.log.Infof("OnClose(%s, %s)", conn.Addr(), err)
 }
 
-func (h *handler) Invoke(conn rtmp.Conn, stream rtmp.Stream, cmd *rtmp.Command, invoke func(*rtmp.Command) error) error {
-	fmt.Printf("Invoke %#v\n", *cmd)
-	return invoke(cmd)
+func (h *handler) Invoke(conn rtmp.Conn, stream rtmp.Stream, cmd *rtmp.Command, callback rtmp.Invoker) error {
+	h.log.Infof("Invoke(%+v)", cmd)
+	return callback.Invoke(cmd)
 }

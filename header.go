@@ -5,7 +5,6 @@ package rtmp
 import (
 	"encoding/binary"
 	"errors"
-	"github.com/thelazyfox/gortmp/log"
 	"io"
 )
 
@@ -57,7 +56,6 @@ type Header struct {
 func ReadBaseHeader(rbuf Reader) (n int, fmt uint8, csi uint32, err error) {
 	var b byte
 	b, err = rbuf.ReadByte()
-	log.Trace("One byte header read: %d", uint8(b))
 	if err != nil {
 		return
 	}
@@ -243,7 +241,6 @@ func (header *Header) Write(wbuf Writer) (n int, err error) {
 	// Write fmt & Chunk stream ID
 	switch {
 	case header.ChunkStreamID <= 63:
-		log.Trace("One Byte Basic Header: %x", byte((header.Fmt<<6)|byte(header.ChunkStreamID)))
 		err = wbuf.WriteByte(byte((header.Fmt << 6) | byte(header.ChunkStreamID)))
 		if err != nil {
 			return

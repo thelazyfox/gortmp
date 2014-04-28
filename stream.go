@@ -5,6 +5,16 @@ import (
 	"fmt"
 )
 
+type StreamInvoker struct {
+	Stream  Stream
+	Invoker Invoker
+	Func    func(Stream, *Command, Invoker) error
+}
+
+func (si *StreamInvoker) Invoke(cmd *Command) error {
+	return si.Func(si.Stream, cmd, si.Invoker)
+}
+
 type Stream interface {
 	ID() uint32
 	Conn() Conn
@@ -16,9 +26,6 @@ type Stream interface {
 	SendCommand(*Command) error
 
 	SetHandler(StreamHandler)
-
-	onReceive(*Message)
-	invoke(*Command) error
 }
 
 type StreamHandler interface {
@@ -26,7 +33,7 @@ type StreamHandler interface {
 	OnPublish(Stream)
 
 	OnReceive(Stream, *Message)
-	Invoke(Stream, *Command, func(*Command) error) error
+	Invoke(Stream, *Command, Invoker) error
 }
 
 type stream struct {
@@ -41,7 +48,7 @@ type stream struct {
 	handler StreamHandler
 }
 
-func NewStream(id uint32, conn Conn, csid uint32) Stream {
+func newStream(id uint32, conn Conn, csid uint32) *stream {
 	return &stream{
 		id:   id,
 		conn: conn,
@@ -103,15 +110,15 @@ func (s *stream) SetHandler(handler StreamHandler) {
 	s.handler = handler
 }
 
-func (s *stream) onReceive(msg *Message) {
+func (s *stream) OnReceive(msg *Message) {
 	if s.handler != nil {
 		s.handler.OnReceive(s, msg)
 	}
 }
 
-func (s *stream) invoke(cmd *Command) error {
+func (s *stream) OnCommand(cmd *Command) error {
 	if s.handler != nil {
-		return s.handler.Invoke(s, cmd, s.Invoke)
+		return s.handler.Invoke(s, cmd, s)
 	} else {
 		return s.Invoke(cmd)
 	}

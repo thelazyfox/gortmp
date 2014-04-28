@@ -1,6 +1,8 @@
 package rtmp
 
 import (
+	"bytes"
+	"github.com/thelazyfox/goamf"
 	"sync/atomic"
 )
 
@@ -18,4 +20,22 @@ func (c *Counter) Get() int64 {
 
 func (c *Counter) Set(x int64) {
 	atomic.StoreInt64(&c.val, x)
+}
+
+func dumpAmf3(buf *bytes.Buffer) []interface{} {
+	buf.ReadByte()
+	return dumpAmf0(buf)
+}
+
+func dumpAmf0(buf *bytes.Buffer) []interface{} {
+	var objs []interface{}
+	for buf.Len() > 0 {
+		obj, err := amf.ReadValue(buf)
+		if err != nil {
+			return objs
+		}
+
+		objs = append(objs, obj)
+	}
+	return objs
 }

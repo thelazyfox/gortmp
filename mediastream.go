@@ -2,6 +2,7 @@ package rtmp
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 )
@@ -57,15 +58,19 @@ type mediaStream struct {
 
 	done     chan bool
 	doneOnce sync.Once
+
+	log Logger
 }
 
-func NewMediaStream(stream Stream) MediaStream {
+func NewMediaStream(streamName string, stream Stream) MediaStream {
+	logTag := fmt.Sprintf("MediaStream(%s)", streamName)
 	ms := &mediaStream{
 		stream: stream,
 		pub:    make(chan *FlvTag),
 		sub:    make(chan chan *FlvTag),
 		unsub:  make(chan chan *FlvTag),
 		done:   make(chan bool),
+		log:    NewLogger(logTag),
 	}
 
 	go ms.loop()
@@ -163,6 +168,9 @@ func (ms *mediaStream) updateBps(ts int64) {
 }
 
 func (ms *mediaStream) loop() {
+	ms.log.Infof("start")
+	defer ms.log.Infof("end")
+
 	var dataHeader, audioHeader, videoHeader *FlvTag
 	subs := make(map[chan *FlvTag]bool)
 
@@ -176,7 +184,6 @@ func (ms *mediaStream) loop() {
 	for {
 		select {
 		case tag := <-ms.pub:
-
 			ms.bytes.Add(int64(tag.Size))
 			// store the sequence headers if necesary
 			switch tag.Type {
