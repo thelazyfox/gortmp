@@ -338,9 +338,9 @@ func (ss *serverStreamHandler) Invoke(stream Stream, cmd *Command, callback Invo
 		invoker := &StreamInvoker{Stream: stream, Invoker: callback, Func: ss.invokePlay}
 		err := ss.server.handler.Invoke(stream.Conn(), stream, cmd, invoker)
 		if err != nil {
-			ss.server.log.Errorf("play rejected: %+v", cmd.Objects)
+			ss.server.log.Errorf("play(%+v) rejected: %s", cmd.Objects, err)
 		} else {
-			ss.server.log.Infof("play accepted: %+v")
+			ss.server.log.Infof("play(%+v) accepted", cmd.Objects)
 		}
 		return err
 	default:
