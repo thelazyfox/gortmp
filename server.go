@@ -235,17 +235,19 @@ func (sc *serverConnHandler) OnCreateStream(stream Stream) {
 func (sc *serverConnHandler) OnDestroyStream(stream Stream) {
 	if stream.Publishing() {
 		sc.server.log.Debugf("closing media stream")
-		mp := sc.server.getStream(stream.Name())
-		if mp != nil {
-			mp.Close()
+		ms := sc.server.getStream(stream.Name())
+		if ms != nil {
+			ms.Close()
+			sc.server.delStream(stream.Name())
 		}
 	}
 
 	if stream.Playing() {
 		sc.server.log.Debugf("closing media player")
-		ms := sc.server.getPlayer(stream)
-		if ms != nil {
-			ms.Close()
+		mp := sc.server.getPlayer(stream)
+		if mp != nil {
+			mp.Close()
+			sc.server.delPlayer(stream)
 		}
 	}
 
