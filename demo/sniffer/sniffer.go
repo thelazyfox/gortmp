@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"github.com/thelazyfox/goamf"
-	"github.com/thelazyfox/gortmp/log"
 	"io"
 	"io/ioutil"
 	"net"
@@ -19,8 +18,6 @@ var remote = flag.String("remote", "live.justin.tv:1935", "remote")
 
 func main() {
 	flag.Parse()
-
-	// log.SetLogLevel(log.TRACE)
 
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
@@ -91,7 +88,6 @@ func NewSniffer(r io.Reader, tag string) Sniffer {
 
 	go io.Copy(ioutil.Discard, a)
 
-	log.Trace("Creating chunk stream reader")
 	chunkStreamReader := rtmp.NewChunkStreamReader(RtmpLogger{tag})
 
 	go func() {

@@ -309,6 +309,8 @@ func (c *conn) Invoke(cmd *Command) error {
 		return c.invokeConnect(cmd)
 	case "createStream":
 		return c.invokeCreateStream(cmd)
+	case "deleteStream":
+		return c.invokeDeleteStream(cmd)
 	case "FCPublish":
 		return c.invokeFCPublish(cmd)
 	}
@@ -388,6 +390,28 @@ func (c *conn) invokeCreateStream(cmd *Command) error {
 	return nil
 }
 
+func (c *conn) invokeDeleteStream(cmd *Command) error {
+	c.log.Tracef("invokeDeleteStream(%#v)", *cmd)
+
+	if len(cmd.Objects) < 2 {
+		return ErrCallFailed(fmt.Errorf("invalid cmd object: %+v", cmd.Objects))
+	}
+
+	// amf ints are passed as float
+	streamid, ok := cmd.Objects[1].(float64)
+	if !ok {
+		return ErrCallFailed(fmt.Errorf("invalid stream id: %+v", cmd.Objects))
+	}
+
+	stream, ok := c.deleteStream(int(streamid))
+	if !ok {
+		return ErrCallFailed(fmt.Errorf("no such stream id: %d", int(streamid)))
+	}
+
+	c.handler.OnDestroyStream(stream)
+	return nil
+}
+
 func (c *conn) invokeFCPublish(cmd *Command) error {
 	streamName, err := func() (string, error) {
 		if cmd.Objects == nil || len(cmd.Objects) != 2 {
@@ -424,6 +448,16 @@ func (c *conn) allocateStream(csid uint32) Stream {
 			return c.streams[i]
 		}
 	}
+}
+
+func (c *conn) deleteStream(streamid int) (Stream, bool) {
+	stream, ok := c.streams[uint32(streamid)]
+	if !ok {
+		return nil, false
+	}
+
+	delete(c.streams, uint32(streamid))
+	return stream, true
 }
 
 func (c *conn) OnCommand(cmd *Command) {
