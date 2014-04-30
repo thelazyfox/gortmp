@@ -286,6 +286,11 @@ func (c *conn) OnWindowFull(count uint32) {
 		if err != nil {
 			c.Fatal(fmt.Errorf("OnWindowFull error: %s", err))
 		}
+
+		err = c.Flush()
+		if err != nil {
+			c.Fatal(fmt.Errorf("OnWindowFull flush error: %s", err))
+		}
 	}()
 }
 
