@@ -4,32 +4,31 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/thelazyfox/goamf"
 	"net"
 )
 
 // Conn
 
 type Invoker interface {
-	Invoke(*Command) error
+	Invoke(Command) error
 }
 
 type ConnInvoker struct {
 	Conn    Conn
 	Invoker Invoker
-	Func    func(Conn, *Command, Invoker) error
+	Func    func(Conn, Command, Invoker) error
 }
 
-func (ci *ConnInvoker) Invoke(cmd *Command) error {
+func (ci *ConnInvoker) Invoke(cmd Command) error {
 	return ci.Func(ci.Conn, cmd, ci.Invoker)
 }
 
 type Conn interface {
 	// basics
 	Send(msg *Message) error
-	SendCommand(cmd *Command) error
-	Error(err error)
+	SendCommand(cmd Command) error
 	Fatal(err error)
+	Error(err ConnError)
 	Close()
 
 	// probably should be private
@@ -56,7 +55,7 @@ type ConnHandler interface {
 	OnClose(Conn, error)
 
 	OnReceive(Conn, *Message)
-	Invoke(Conn, *Command, Invoker) error
+	Invoke(Conn, Command, Invoker) error
 }
 
 type conn struct {
@@ -99,22 +98,15 @@ func (c *conn) Send(msg *Message) error {
 	return c.chunkStream.Send(msg)
 }
 
-func (c *conn) SendCommand(cmd *Command) error {
+func (c *conn) SendCommand(cmd Command) error {
 	c.log.Tracef("SendCommand(%+v)", cmd)
 
-	buf := new(bytes.Buffer)
-	err := cmd.Write(buf)
+	msg, err := cmd.RawCommand().Message()
 	if err != nil {
 		return err
 	}
 
-	msg := &Message{
-		StreamID:      cmd.StreamID,
-		ChunkStreamID: CS_ID_COMMAND,
-		Type:          COMMAND_AMF0,
-		Size:          uint32(buf.Len()),
-		Buf:           buf,
-	}
+	c.log.Tracef("SendCommand msg=%+v", *msg)
 
 	err = c.Send(msg)
 	if err != nil {
@@ -137,38 +129,21 @@ func (c *conn) App() string {
 }
 
 func (c *conn) Fatal(err error) {
-	c.Error(err)
-	c.log.Errorf("Fatal")
-	c.Close()
+	c.Error(NewConnErrorStatus(err, StatusConnectClosed(err.Error()), true))
 }
 
-func (c *conn) Error(err error) {
+// all errors are fatal unless otherwise specified
+func (c *conn) Error(err ConnError) {
 	c.log.Errorf("Error(%s)", err)
-	var cmd *Command
 
-	if errStatus, ok := err.(ErrorStatus); ok {
-		cmd = &Command{
-			Name: "onStatus",
-			Objects: []interface{}{
-				nil,
-				errStatus.Status(),
-			},
-		}
-	} else if errCmd, ok := err.(ErrorCommand); ok {
-		cmd = errCmd.Command()
+	c.SendCommand(err.Command())
+
+	if err.IsFatal() {
+		c.log.Errorf("fatal connection error: %s", err)
+		c.Close()
 	} else {
-		cmd = &Command{
-			Name: "onStatus",
-			Objects: []interface{}{
-				nil,
-				StatusConnectClosed(err.Error()),
-			},
-		}
+		c.log.Errorf("connection error: %s", err)
 	}
-
-	c.SendCommand(cmd)
-	c.log.Errorf("Closing connection with error: %s", err)
-	c.Close()
 }
 
 func (c *conn) Close() {
@@ -257,19 +232,12 @@ func (c *conn) OnMessage(msg *Message) {
 	c.log.Tracef("OnMessage(%+v)", msg)
 	switch msg.Type {
 	case COMMAND_AMF3:
-		cmd, err := c.parseAmf3(bytes.NewBuffer(msg.Buf.Bytes()), msg.StreamID)
-		if err != nil {
-			objs := dumpAmf3(bytes.NewBuffer(msg.Buf.Bytes()))
-			c.log.Warnf("Invalid COMMAND_AMF3 message: %+v", objs)
-			c.OnReceive(msg)
-		} else {
-			c.OnCommand(cmd)
-		}
+		fallthrough
 	case COMMAND_AMF0:
-		cmd, err := c.parseAmf0(bytes.NewBuffer(msg.Buf.Bytes()), msg.StreamID, nil)
+		cmd, err := ParseCommand(msg)
 		if err != nil {
-			objs := dumpAmf0(bytes.NewBuffer(msg.Buf.Bytes()))
-			c.log.Warnf("Invalid COMMAND_AMF0 message: %+v", objs)
+			objs := dumpAmf(msg)
+			c.log.Warnf("invalid command message: %s -- %+v", err, objs)
 			c.OnReceive(msg)
 		} else {
 			c.OnCommand(cmd)
@@ -303,46 +271,30 @@ func (c *conn) OnReceive(msg *Message) {
 		if stream != nil {
 			stream.OnReceive(msg)
 		} else {
-			c.Error(fmt.Errorf("invalid message stream id"))
+			c.Fatal(fmt.Errorf("invalid message stream id"))
 		}
 	}
 }
 
-func (c *conn) Invoke(cmd *Command) error {
-	switch cmd.Name {
-	case "connect":
+func (c *conn) Invoke(cmd Command) error {
+	switch cmd := cmd.(type) {
+	case ConnectCommand:
 		return c.invokeConnect(cmd)
-	case "createStream":
+	case CreateStreamCommand:
 		return c.invokeCreateStream(cmd)
-	case "deleteStream":
+	case DeleteStreamCommand:
 		return c.invokeDeleteStream(cmd)
-	case "FCPublish":
+	case FCPublishCommand:
 		return c.invokeFCPublish(cmd)
 	}
 
 	return nil
 }
 
-func (c *conn) invokeConnect(cmd *Command) error {
-	app, err := func() (string, error) {
-		if cmd.Objects == nil || len(cmd.Objects) < 1 {
-			return "", fmt.Errorf("connect failed: invalid args %v", cmd.Objects)
-		}
-
-		params, ok := cmd.Objects[0].(amf.Object)
-		if !ok {
-			return "", fmt.Errorf("connect failed: invalid args %v", cmd.Objects)
-		}
-
-		app, ok := params["app"].(string)
-		if !ok {
-			return "", fmt.Errorf("connect failed: invalid app %v", params["app"])
-		}
-		return app, nil
-	}()
-
-	if err != nil {
-		return ErrConnectRejected(err)
+func (c *conn) invokeConnect(cmd ConnectCommand) error {
+	app, ok := cmd.Properties["app"].(string)
+	if !ok {
+		return ErrConnectRejected(fmt.Errorf("invalid app: %#v", cmd.Properties["app"]))
 	}
 
 	c.app = app
@@ -352,13 +304,10 @@ func (c *conn) invokeConnect(cmd *Command) error {
 	c.SendStreamBegin(0)
 	c.SetChunkSize(4096)
 
-	err = c.SendCommand(&Command{
-		Name:          "_result",
+	err := c.SendCommand(ResultCommand{
 		TransactionID: cmd.TransactionID,
-		Objects: []interface{}{
-			DefaultConnectProperties,
-			DefaultConnectInformation,
-		},
+		Properties:    DefaultConnectProperties,
+		Info:          DefaultConnectInformation,
 	})
 
 	if err != nil {
@@ -369,8 +318,8 @@ func (c *conn) invokeConnect(cmd *Command) error {
 	return nil
 }
 
-func (c *conn) invokeCreateStream(cmd *Command) error {
-	c.log.Tracef("invokeCreateStream(%#v)", *cmd)
+func (c *conn) invokeCreateStream(cmd CreateStreamCommand) error {
+	c.log.Tracef("invokeCreateStream(%#v)", cmd)
 
 	csid, err := c.chunkStream.CreateChunkStream(LowPriority)
 	if err != nil {
@@ -379,11 +328,9 @@ func (c *conn) invokeCreateStream(cmd *Command) error {
 
 	stream := c.allocateStream(csid)
 
-	err = c.SendCommand(&Command{
-		Name:          "_result",
-		StreamID:      cmd.StreamID,
+	err = c.SendCommand(ResultCommand{
 		TransactionID: cmd.TransactionID,
-		Objects:       []interface{}{nil, stream.ID()},
+		Info:          stream.ID(),
 	})
 
 	if err != nil {
@@ -395,54 +342,25 @@ func (c *conn) invokeCreateStream(cmd *Command) error {
 	return nil
 }
 
-func (c *conn) invokeDeleteStream(cmd *Command) error {
-	c.log.Tracef("invokeDeleteStream(%#v)", *cmd)
+func (c *conn) invokeDeleteStream(cmd DeleteStreamCommand) error {
+	c.log.Tracef("invokeDeleteStream(%#v)", cmd)
 
-	if len(cmd.Objects) < 2 {
-		return ErrCallFailed(fmt.Errorf("invalid cmd object: %+v", cmd.Objects))
-	}
-
-	// amf ints are passed as float
-	streamid, ok := cmd.Objects[1].(float64)
+	stream, ok := c.deleteStream(cmd.DeleteStreamID)
 	if !ok {
-		return ErrCallFailed(fmt.Errorf("invalid stream id: %+v", cmd.Objects))
-	}
-
-	stream, ok := c.deleteStream(int(streamid))
-	if !ok {
-		return ErrCallFailed(fmt.Errorf("no such stream id: %d", int(streamid)))
+		return ErrCallFailed(fmt.Errorf("no such stream id: %d", cmd.DeleteStreamID), true)
 	}
 
 	c.handler.OnDestroyStream(stream)
 	return nil
 }
 
-func (c *conn) invokeFCPublish(cmd *Command) error {
-	streamName, err := func() (string, error) {
-		if cmd.Objects == nil || len(cmd.Objects) != 2 {
-			return "", fmt.Errorf("publish failed: invalid args %v", cmd.Objects)
-		}
-
-		name, ok := cmd.Objects[1].(string)
-		if !ok || len(name) == 0 {
-			return "", fmt.Errorf("publish failed: invalid name %v", cmd.Objects)
-		}
-
-		return name, nil
-	}()
-
-	if err != nil {
-		return ErrPublishBadName(err)
+func (c *conn) invokeFCPublish(cmd FCPublishCommand) error {
+	if len(cmd.Name) == 0 {
+		return ErrPublishBadName(fmt.Errorf("invalid stream name"))
 	}
 
-	return c.SendCommand(&Command{
-		Name:          "onFCPublish",
-		StreamID:      0,
-		TransactionID: 0,
-		Objects: []interface{}{
-			nil,
-			StatusPublishStart(fmt.Sprintf("FCPublish to stream %s.", streamName)),
-		},
+	return c.SendCommand(OnFCPublishCommand{
+		Status: StatusPublishStart(fmt.Sprintf("FCPublish to stream %s", cmd.Name)),
 	})
 }
 
@@ -455,23 +373,25 @@ func (c *conn) allocateStream(csid uint32) Stream {
 	}
 }
 
-func (c *conn) deleteStream(streamid int) (Stream, bool) {
-	stream, ok := c.streams[uint32(streamid)]
+func (c *conn) deleteStream(streamid uint32) (Stream, bool) {
+	stream, ok := c.streams[streamid]
 	if !ok {
 		return nil, false
 	}
 
-	delete(c.streams, uint32(streamid))
+	delete(c.streams, streamid)
 	return stream, true
 }
 
-func (c *conn) OnCommand(cmd *Command) {
+func (c *conn) OnCommand(cmd Command) {
 	var err error
 
-	if cmd.StreamID == 0 {
+	raw := cmd.RawCommand()
+
+	if raw.StreamID == 0 {
 		err = c.handler.Invoke(c, cmd, c)
 	} else {
-		stream := c.streams[cmd.StreamID]
+		stream := c.streams[raw.StreamID]
 		if stream != nil {
 			err = stream.OnCommand(cmd)
 		} else {
@@ -482,47 +402,6 @@ func (c *conn) OnCommand(cmd *Command) {
 	if err != nil {
 		c.Fatal(err)
 	}
-}
-
-func (c *conn) parseAmf3(buf *bytes.Buffer, streamid uint32) (*Command, error) {
-	cmd := &Command{IsFlex: true}
-
-	_, err := buf.ReadByte()
-	if err != nil {
-		return nil, err
-	}
-
-	return c.parseAmf0(buf, streamid, cmd)
-}
-
-func (c *conn) parseAmf0(buf *bytes.Buffer, streamid uint32, cmd *Command) (*Command, error) {
-	if cmd == nil {
-		cmd = &Command{}
-	}
-
-	name, err := amf.ReadString(buf)
-	if err != nil {
-		return nil, err
-	}
-	cmd.Name = name
-
-	txnid, err := amf.ReadDouble(buf)
-	if err != nil {
-		return nil, err
-	}
-	cmd.TransactionID = uint32(txnid)
-
-	for buf.Len() > 0 {
-		object, err := amf.ReadValue(buf)
-		if err != nil {
-			return nil, err
-		}
-		cmd.Objects = append(cmd.Objects, object)
-	}
-
-	cmd.StreamID = streamid
-
-	return cmd, nil
 }
 
 func (c *conn) waitClose() {

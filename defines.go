@@ -175,15 +175,15 @@ func StatusCallFailed(desc string) Status {
 }
 
 // ErrorStatus constructors
-func ErrConnectRejected(err error) ErrorStatus {
-	return NewErrorStatus(err, StatusConnectRejected(err.Error()))
+func ErrConnectRejected(err error) ConnError {
+	return NewConnErrorStatus(err, StatusConnectRejected(err.Error()), true)
 }
-func ErrPublishBadName(err error) ErrorStatus {
-	return NewErrorStatus(err, StatusPublishBadName(err.Error()))
+func ErrPublishBadName(err error) ConnError {
+	return NewConnErrorStatus(err, StatusPublishBadName(err.Error()), true)
 }
-func ErrPlayFailed(err error) ErrorStatus {
-	return NewErrorStatus(err, StatusPlayFailed(err.Error()))
+func ErrPlayFailed(err error) ConnError {
+	return NewConnErrorStatus(err, StatusPlayFailed(err.Error()), true)
 }
-func ErrCallFailed(err error) ErrorStatus {
-	return NewErrorStatus(err, StatusCallFailed(err.Error()))
+func ErrCallFailed(err error, fatal bool) ConnError {
+	return NewConnErrorStatus(err, StatusCallFailed(err.Error()), fatal)
 }

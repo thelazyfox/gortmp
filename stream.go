@@ -1,17 +1,16 @@
 package rtmp
 
 import (
-	"bytes"
 	"fmt"
 )
 
 type StreamInvoker struct {
 	Stream  Stream
 	Invoker Invoker
-	Func    func(Stream, *Command, Invoker) error
+	Func    func(Stream, Command, Invoker) error
 }
 
-func (si *StreamInvoker) Invoke(cmd *Command) error {
+func (si *StreamInvoker) Invoke(cmd Command) error {
 	return si.Func(si.Stream, cmd, si.Invoker)
 }
 
@@ -23,7 +22,7 @@ type Stream interface {
 	Playing() bool
 
 	Send(*Message) error
-	SendCommand(*Command) error
+	SendCommand(Command) error
 
 	SetHandler(StreamHandler)
 }
@@ -33,7 +32,7 @@ type StreamHandler interface {
 	OnPublish(Stream)
 
 	OnReceive(Stream, *Message)
-	Invoke(Stream, *Command, Invoker) error
+	Invoke(Stream, Command, Invoker) error
 }
 
 type stream struct {
@@ -83,19 +82,10 @@ func (s *stream) Send(msg *Message) error {
 	return s.conn.Send(msg)
 }
 
-func (s *stream) SendCommand(cmd *Command) error {
-	buf := new(bytes.Buffer)
-	err := cmd.Write(buf)
+func (s *stream) SendCommand(cmd Command) error {
+	msg, err := cmd.RawCommand().Message()
 	if err != nil {
 		return err
-	}
-
-	msg := &Message{
-		StreamID:      cmd.StreamID,
-		ChunkStreamID: CS_ID_COMMAND,
-		Type:          COMMAND_AMF0,
-		Size:          uint32(buf.Len()),
-		Buf:           buf,
 	}
 
 	err = s.Send(msg)
@@ -116,7 +106,7 @@ func (s *stream) OnReceive(msg *Message) {
 	}
 }
 
-func (s *stream) OnCommand(cmd *Command) error {
+func (s *stream) OnCommand(cmd Command) error {
 	if s.handler != nil {
 		return s.handler.Invoke(s, cmd, s)
 	} else {
@@ -124,50 +114,33 @@ func (s *stream) OnCommand(cmd *Command) error {
 	}
 }
 
-func (s *stream) Invoke(cmd *Command) error {
-	switch cmd.Name {
-	case "publish":
+func (s *stream) Invoke(cmd Command) error {
+	switch cmd := cmd.(type) {
+	case PublishCommand:
 		return s.invokePublish(cmd)
-	case "play":
+	case PlayCommand:
 		return s.invokePlay(cmd)
+	default:
+		return nil
 	}
-
-	return nil
 }
 
-func (s *stream) invokePublish(cmd *Command) error {
-	streamName, err := func() (string, error) {
-		if cmd.Objects == nil || len(cmd.Objects) < 3 {
-			return "", fmt.Errorf("publish error: invalid args %v", cmd.Objects)
-		}
-
-		name, ok := cmd.Objects[1].(string)
-		if !ok || len(name) == 0 {
-			return "", fmt.Errorf("publish error: invalid args %v", cmd.Objects)
-		}
-
-		return name, nil
-	}()
-
-	if err != nil {
-		return ErrPublishBadName(err)
+func (s *stream) invokePublish(cmd PublishCommand) error {
+	if len(cmd.Name) == 0 {
+		return ErrPublishBadName(fmt.Errorf("invalid publish stream name"))
 	}
 
-	err = s.conn.SendCommand(&Command{
-		Name:          "onStatus",
+	err := s.conn.SendCommand(OnStatusCommand{
 		StreamID:      cmd.StreamID,
 		TransactionID: cmd.TransactionID,
-		Objects: []interface{}{
-			nil,
-			StatusPublishStart(fmt.Sprintf("Publishing %s.", streamName)),
-		},
+		Info:          StatusPublishStart(fmt.Sprintf("Publishing %s.", cmd.Name)),
 	})
 
 	if err != nil {
 		return err
 	}
 
-	s.name = streamName
+	s.name = cmd.Name
 	s.publishing = true
 
 	if s.handler != nil {
@@ -176,33 +149,15 @@ func (s *stream) invokePublish(cmd *Command) error {
 	return nil
 }
 
-func (s *stream) invokePlay(cmd *Command) error {
-	streamName, err := func() (string, error) {
-		if cmd.Objects == nil || len(cmd.Objects) < 2 {
-			return "", fmt.Errorf("play error: invalid args %v", cmd.Objects)
-		}
-
-		name, ok := cmd.Objects[1].(string)
-		if !ok {
-			return "", fmt.Errorf("play error: invalid args %v", cmd.Objects)
-		}
-
-		return name, nil
-	}()
-
-	if err != nil {
-		return ErrPlayFailed(err)
+func (s *stream) invokePlay(cmd PlayCommand) error {
+	if len(cmd.Name) == 0 {
+		return ErrPlayFailed(fmt.Errorf("invalid play stream name"))
 	}
 
-	err = s.SendCommand(&Command{
-		Name:          "onStatus",
-		TransactionID: 0,
-		Objects: []interface{}{
-			nil,
-			NetStreamPlayInfo{
-				Status:  StatusPlayReset("reset"),
-				Details: streamName,
-			},
+	err := s.SendCommand(OnStatusCommand{
+		Info: NetStreamPlayInfo{
+			Status:  StatusPlayReset("reset"),
+			Details: cmd.Name,
 		},
 	})
 
@@ -210,15 +165,10 @@ func (s *stream) invokePlay(cmd *Command) error {
 		return err
 	}
 
-	err = s.SendCommand(&Command{
-		Name:          "onStatus",
-		TransactionID: 0,
-		Objects: []interface{}{
-			nil,
-			NetStreamPlayInfo{
-				Status:  StatusPlayStart("play"),
-				Details: streamName,
-			},
+	err = s.SendCommand(OnStatusCommand{
+		Info: NetStreamPlayInfo{
+			Status:  StatusPlayStart("play"),
+			Details: cmd.Name,
 		},
 	})
 
@@ -226,7 +176,7 @@ func (s *stream) invokePlay(cmd *Command) error {
 		return err
 	}
 
-	s.name = streamName
+	s.name = cmd.Name
 	s.playing = true
 
 	if s.handler != nil {

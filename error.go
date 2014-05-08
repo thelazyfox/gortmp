@@ -1,37 +1,29 @@
 package rtmp
 
-type ErrorCommand interface {
+type ConnError interface {
 	Error() string
-	Command() *Command
+	Command() Command
+	IsFatal() bool
 }
 
-type ErrorStatus interface {
-	Error() string
-	Status() Status
-}
-
-type errorCommand struct {
+type connError struct {
 	error
-	cmd *Command
+	cmd   Command
+	fatal bool
 }
 
-type errorStatus struct {
-	error
-	status Status
+func NewConnError(err error, cmd Command, fatal bool) ConnError {
+	return connError{err, cmd, fatal}
 }
 
-func NewErrorCommand(err error, cmd *Command) ErrorCommand {
-	return &errorCommand{err, cmd}
+func NewConnErrorStatus(err error, status Status, fatal bool) ConnError {
+	return connError{err, OnStatusCommand{Info: status}, fatal}
 }
 
-func NewErrorStatus(err error, status Status) ErrorStatus {
-	return &errorStatus{err, status}
+func (ce connError) Command() Command {
+	return ce.cmd
 }
 
-func (ec *errorCommand) Command() *Command {
-	return ec.cmd
-}
-
-func (es *errorStatus) Status() Status {
-	return es.status
+func (ce connError) IsFatal() bool {
+	return ce.fatal
 }

@@ -208,7 +208,7 @@ func main() {
 	flag.Parse()
 	log.SetOutput(os.Stdout)
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	rtmp.SetLogLevel(rtmp.LogDebug)
+	rtmp.SetLogLevel(rtmp.LogTrace)
 
 	go func() {
 		log := rtmp.NewLogger("http.ListenAndServe(:6060)")
@@ -275,7 +275,7 @@ func (h *handler) OnClose(conn rtmp.Conn, err error) {
 	h.log.Infof("OnClose(%s, %s)", conn.Addr(), err)
 }
 
-func (h *handler) Invoke(conn rtmp.Conn, stream rtmp.Stream, cmd *rtmp.Command, callback rtmp.Invoker) error {
+func (h *handler) Invoke(conn rtmp.Conn, stream rtmp.Stream, cmd rtmp.Command, callback rtmp.Invoker) error {
 	h.log.Infof("Invoke(%+v)", cmd)
 	return callback.Invoke(cmd)
 }

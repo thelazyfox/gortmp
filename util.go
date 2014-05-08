@@ -39,3 +39,14 @@ func dumpAmf0(buf *bytes.Buffer) []interface{} {
 	}
 	return objs
 }
+
+func dumpAmf(msg *Message) []interface{} {
+	switch msg.Type {
+	case COMMAND_AMF0:
+		return dumpAmf0(bytes.NewBuffer(msg.Buf.Bytes()))
+	case COMMAND_AMF3:
+		return dumpAmf3(bytes.NewBuffer(msg.Buf.Bytes()))
+	default:
+		return nil
+	}
+}

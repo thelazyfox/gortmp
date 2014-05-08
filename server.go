@@ -2,7 +2,6 @@ package rtmp
 
 import (
 	"fmt"
-	"github.com/thelazyfox/goamf"
 	"net"
 	"sync"
 	"time"
@@ -61,7 +60,7 @@ type ServerHandler interface {
 
 	OnClose(Conn, error)
 
-	Invoke(Conn, Stream, *Command, Invoker) error
+	Invoke(Conn, Stream, Command, Invoker) error
 }
 
 func NewServer(handler ServerHandler) Server {
@@ -264,43 +263,27 @@ func (sc *serverConnHandler) OnReceive(conn Conn, msg *Message) {
 	// nothing to do here, should not get messages
 }
 
-func (sc *serverConnHandler) Invoke(conn Conn, cmd *Command, callback Invoker) error {
-	switch cmd.Name {
-	case "connect":
-		invoker := &ConnInvoker{Conn: conn, Invoker: callback, Func: sc.invokeConnect}
-		err := sc.server.handler.Invoke(conn, nil, cmd, invoker)
-		if err != nil {
-			sc.server.log.Errorf("connect(%+v) rejected: %s", cmd.Objects, err)
-		} else {
-			sc.server.log.Infof("connect(%+v) accepted", cmd.Objects)
-		}
-		return err
+func (sc *serverConnHandler) DoInvoke(conn Conn, cmd Command, callback Invoker) error {
+	switch cmd := cmd.(type) {
+	case ConnectCommand:
+		return sc.invokeConnect(conn, cmd, callback)
 	default:
-		return sc.server.handler.Invoke(conn, nil, cmd, callback)
+		return callback.Invoke(cmd)
 	}
 }
 
-func (sc *serverConnHandler) invokeConnect(conn Conn, cmd *Command, callback Invoker) error {
-	err := func() error {
-		if cmd.Objects == nil || len(cmd.Objects) == 0 {
-			return fmt.Errorf("connect error: invalid args %v", cmd.Objects)
-		}
+func (sc *serverConnHandler) Invoke(conn Conn, cmd Command, callback Invoker) error {
+	return sc.server.handler.Invoke(conn, nil, cmd, &ConnInvoker{
+		Conn:    conn,
+		Invoker: callback,
+		Func:    sc.DoInvoke,
+	})
+}
 
-		obj, ok := cmd.Objects[0].(amf.Object)
-		if !ok {
-			return fmt.Errorf("connect error: invalid args %v", cmd.Objects)
-		}
-
-		app, ok := obj["app"].(string)
-		if !ok || app != "app" {
-			return fmt.Errorf("connect error: invalid app %v", cmd.Objects)
-		}
-
-		return nil
-	}()
-
-	if err != nil {
-		return ErrConnectRejected(err)
+func (sc *serverConnHandler) invokeConnect(conn Conn, cmd ConnectCommand, callback Invoker) error {
+	app, ok := cmd.Properties["app"].(string)
+	if !ok || app != "app" {
+		return ErrConnectRejected(fmt.Errorf("invalid app: %v", cmd.Properties["app"]))
 	}
 
 	return callback.Invoke(cmd)
@@ -325,29 +308,23 @@ func (ss *serverStreamHandler) OnPlay(stream Stream) {
 	ss.server.handler.OnPlay(stream, mp)
 }
 
-func (ss *serverStreamHandler) Invoke(stream Stream, cmd *Command, callback Invoker) error {
-	switch cmd.Name {
-	case "publish":
-		invoker := &StreamInvoker{Stream: stream, Invoker: callback, Func: ss.invokePublish}
-		err := ss.server.handler.Invoke(stream.Conn(), stream, cmd, invoker)
-		if err != nil {
-			ss.server.log.Errorf("publish(%+v) rejected: %s", cmd.Objects, err)
-		} else {
-			ss.server.log.Infof("publish(%+v)", cmd.Objects)
-		}
-		return err
-	case "play":
-		invoker := &StreamInvoker{Stream: stream, Invoker: callback, Func: ss.invokePlay}
-		err := ss.server.handler.Invoke(stream.Conn(), stream, cmd, invoker)
-		if err != nil {
-			ss.server.log.Errorf("play(%+v) rejected: %s", cmd.Objects, err)
-		} else {
-			ss.server.log.Infof("play(%+v) accepted", cmd.Objects)
-		}
-		return err
+func (ss *serverStreamHandler) DoInvoke(stream Stream, cmd Command, callback Invoker) error {
+	switch cmd := cmd.(type) {
+	case PublishCommand:
+		return ss.invokePublish(stream, cmd, callback)
+	case PlayCommand:
+		return ss.invokePlay(stream, cmd, callback)
 	default:
-		return ss.server.handler.Invoke(stream.Conn(), stream, cmd, callback)
+		return callback.Invoke(cmd)
 	}
+}
+
+func (ss *serverStreamHandler) Invoke(stream Stream, cmd Command, callback Invoker) error {
+	return ss.server.handler.Invoke(stream.Conn(), stream, cmd, &StreamInvoker{
+		Stream:  stream,
+		Invoker: callback,
+		Func:    ss.DoInvoke,
+	})
 }
 
 func (ss *serverStreamHandler) OnReceive(stream Stream, msg *Message) {
@@ -371,26 +348,16 @@ func (ss *serverStreamHandler) OnReceive(stream Stream, msg *Message) {
 	}
 }
 
-func (ss *serverStreamHandler) invokePublish(stream Stream, cmd *Command, callback Invoker) error {
-	if cmd.Objects == nil || len(cmd.Objects) != 3 {
-		return ErrPublishBadName(fmt.Errorf("bad publish arguments: %v", cmd.Objects))
-	}
+func (ss *serverStreamHandler) invokePublish(stream Stream, cmd PublishCommand, callback Invoker) error {
+	ms := NewMediaStream(cmd.Name, stream)
 
-	name, ok := cmd.Objects[1].(string)
-	if !ok || len(name) == 0 {
-		return ErrPublishBadName(fmt.Errorf("invalid stream name: %v", cmd.Objects[1]))
-	}
-
-	ms := NewMediaStream(name, stream)
-	ok = ss.server.putStream(name, ms)
-	if !ok {
+	if ok := ss.server.putStream(cmd.Name, ms); !ok {
 		ms.Close()
-		return ErrPublishBadName(fmt.Errorf("invalid stream name: %v", name))
+		return ErrPublishBadName(fmt.Errorf("invalid stream name: %v", cmd.Name))
 	}
 
-	err := callback.Invoke(cmd)
-	if err != nil {
-		ss.server.delStream(name)
+	if err := callback.Invoke(cmd); err != nil {
+		ss.server.delStream(cmd.Name)
 		ms.Close()
 		return err
 	}
@@ -398,19 +365,10 @@ func (ss *serverStreamHandler) invokePublish(stream Stream, cmd *Command, callba
 	return nil
 }
 
-func (ss *serverStreamHandler) invokePlay(stream Stream, cmd *Command, callback Invoker) error {
-	if cmd.Objects == nil || len(cmd.Objects) < 2 {
-		return ErrPlayFailed(fmt.Errorf("bad play arguments: %v", cmd.Objects))
-	}
-
-	name, ok := cmd.Objects[1].(string)
-	if !ok || len(name) == 0 {
-		return ErrPlayFailed(fmt.Errorf("invalid stream name: %v", cmd.Objects))
-	}
-
-	ms := ss.server.getStream(name)
+func (ss *serverStreamHandler) invokePlay(stream Stream, cmd PlayCommand, callback Invoker) error {
+	ms := ss.server.getStream(cmd.Name)
 	if ms == nil {
-		return ErrPlayFailed(fmt.Errorf("invalid stream name: %v", name))
+		return ErrPlayFailed(fmt.Errorf("invalid stream name: %v", cmd.Name))
 	}
 
 	mp, err := NewMediaPlayer(ms, stream)
@@ -418,15 +376,13 @@ func (ss *serverStreamHandler) invokePlay(stream Stream, cmd *Command, callback 
 		return ErrPlayFailed(err)
 	}
 
-	ok = ss.server.putPlayer(stream, mp)
-	if !ok {
+	if ok := ss.server.putPlayer(stream, mp); !ok {
 		mp.Close()
 		ss.server.delPlayer(stream)
 		ss.server.log.Warnf("ignoring play on already playing stream")
 	}
 
-	err = callback.Invoke(cmd)
-	if err != nil {
+	if err = callback.Invoke(cmd); err != nil {
 		ss.server.delPlayer(stream)
 		mp.Close()
 		return err
