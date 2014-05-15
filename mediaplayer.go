@@ -75,11 +75,10 @@ func (mp *mediaPlayer) loop() {
 
 func (mp *mediaPlayer) writeTag(tag *FlvTag) error {
 	return mp.s.Send(&Message{
-		Type:              tag.Type,
-		AbsoluteTimestamp: tag.Timestamp,
-		Timestamp:         tag.Timestamp,
-		Size:              tag.Size,
-		Buf:               bytes.NewBuffer(tag.Bytes),
+		Type:      tag.Type,
+		Timestamp: tag.Timestamp,
+		Size:      tag.Size,
+		Buf:       bytes.NewBuffer(tag.Bytes),
 	})
 }
 

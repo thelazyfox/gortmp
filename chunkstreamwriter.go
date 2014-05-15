@@ -246,6 +246,10 @@ func (cs *outChunkStream) newHeader() *Header {
 	deltaTimestamp := uint32(0)
 	if cs.lastAbsoluteTimestamp < msg.Timestamp {
 		deltaTimestamp = msg.Timestamp - cs.lastAbsoluteTimestamp
+	} else {
+		// set lastHeader to nil to force a full header
+		// because we can't have a negative delta
+		cs.lastHeader = nil
 	}
 	if cs.lastHeader == nil {
 		header.Fmt = HEADER_FMT_FULL
